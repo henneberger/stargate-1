@@ -32,6 +32,7 @@ import scala.collection.mutable
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext}
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 class Namespaces(datamodelRepoTable: CassandraTable, cqlSession: CqlSession) 
 extends LazyLogging{
@@ -47,8 +48,12 @@ extends LazyLogging{
     // reload previous datamodels
     Await.result(datamodelRepository.fetchAllLatestDatamodels(datamodelRepoTable, cqlSession, ExecutionContext.global), Duration.Inf).foreach(name_config => {
       logger.info(s"reloading datamodel from cassandra: ${name_config._1}")
-      val model = stargate.schema.outputModel(stargate.model.parser.parseModel(name_config._2), name_config._1)
-      namespaces(name_config._1) = model
+      val maybeModel = Try(stargate.schema.outputModel(stargate.model.parser.parseModel(name_config._2), name_config._1))
+      if(maybeModel.isSuccess) {
+        namespaces(name_config._1) = maybeModel.get
+      } else {
+        logger.error(s"failed to load model${name_config._1}: ", maybeModel.failed.get)
+      }
     })
     //load all the previous models as swagger configuration
     namespaces.foreach(f=>{

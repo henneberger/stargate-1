@@ -48,8 +48,8 @@ trait PaginationTestTrait extends CassandraTestSession {
         )),
       ))
     )
-    val (entities, streams) = Await.result(stargate.query.untyped.getAndTruncate(model, "A", req, limit, 0, session, executor), Duration.Inf)
-    assert(entities.length <= limit || (entities.length == limit + 1 && entities.last.contains(stargate.keywords.pagination.CONTINUE)))
+    val (entities, continue, streams) = Await.result(stargate.query.untyped.getAndTruncate(model, "A", req, limit, 0, session, executor), Duration.Inf)
+    assert(entities.length <= limit)
     streams.values.foreach((ttl_stream) => Await.result(ttl_stream.entities.length(executor), Duration.Inf) == branching - limit)
   }
 

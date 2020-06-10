@@ -45,6 +45,23 @@ object keywords {
     val TTL: String = KEYWORD_PREFIX + "ttl"
   }
 
+  object response {
+    val DATA: String = "data"
+    val ACTION: String = KEYWORD_PREFIX + "action"
+    val ACTION_CREATE: String = "created"
+    val ACTION_UPDATE: String = "updated"
+    val ACTION_DELETE: String = "deleted"
+    val RELATION: String = KEYWORD_PREFIX + "relation"
+    val RELATION_LINK: String = "link"
+    val RELATION_UNLINK: String = "unlink"
+
+    object continue {
+      val ROOT: String = "continue"
+      val CONTINUE_ID: String = "continueId"
+      val ENTITIES: String = "entities"
+    }
+  }
+
   // should probably move keywords to top-level module or somewhere else if going to have both config/schema and runtime keywords
   object config {
     val ENTITIES: String = "entities"

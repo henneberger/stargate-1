@@ -71,7 +71,7 @@ curl -X GET "http://localhost:8080/v1/api/myNamespace/query/entity/Todo" \
 
 Update todo:
 ```sh
-todoId=$(cat ./createResponse.out | jq -r ".[0].entityId")
+todoId=$(cat ./createResponse.out | jq -r ".data.[0].entityId")
 curl -X PUT "http://localhost:8080/v1/api/myNamespace/query/entity/Todo" \
      -H "content-type: application/json" -d'
 { 

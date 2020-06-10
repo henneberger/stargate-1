@@ -24,12 +24,11 @@ import org.junit.Assert._
 import org.junit.Test
 import stargate.model._
 import stargate.schema.ENTITY_ID_COLUMN_NAME
-import stargate.{CassandraTestSession, query}
+import stargate.{CassandraTestSession, keywords, query, util}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.Random
-import stargate.util
 
 
 trait EntityCRUDTestTrait extends CassandraTestSession {
@@ -77,7 +76,9 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val request = requestMatch ++ requestLink
     val updateRes = mutations.update(entityName,request, session, executor)
     updateRes.map(response => {
-      val linkedIds = response(0)(randomRelation.name).asInstanceOf[Map[String,List[Map[String,Object]]]](stargate.keywords.relation.LINK).map(_(ENTITY_ID_COLUMN_NAME))
+      val linkedEntities = response(0)(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
+      linkedEntities.foreach(e => assertEquals(e(keywords.response.RELATION), keywords.response.RELATION_LINK))
+      val linkedIds = linkedEntities.map(_(ENTITY_ID_COLUMN_NAME))
       assert(linkedIds.length == newChildren.length)
       val childrenWithIds = newChildren.zip(linkedIds).map(ci => ci._1.updated(ENTITY_ID_COLUMN_NAME, ci._2))
       entity.updatedWith(randomRelation.name)(_.map(_.asInstanceOf[List[Map[String,Object]]] ++ childrenWithIds))
@@ -97,7 +98,9 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val updateRes = mutations.update(entityName, request, session, executor)
     updateRes.map(response => {
       assert(response.length == 1)
-      val unlinkedIds = response(0)(randomRelation.name).asInstanceOf[Map[String,List[Map[String,Object]]]](stargate.keywords.relation.UNLINK).map(_(ENTITY_ID_COLUMN_NAME))
+      val unlinkedEntities = response(0)(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
+      unlinkedEntities.foreach(e => assertEquals(e(keywords.response.RELATION), keywords.response.RELATION_UNLINK))
+      val unlinkedIds = unlinkedEntities.map(_(ENTITY_ID_COLUMN_NAME))
       assert(unlinkedIds == List(randomChild))
       entity.updatedWith(randomRelation.name)(_.map(_.asInstanceOf[List[Map[String,Object]]].filter(_(ENTITY_ID_COLUMN_NAME) != randomChild)))
     })(executor)
@@ -116,9 +119,9 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val updateRes = mutations.update(entityName, request, session, executor)
     updateRes.map(response => {
       assert(response.length == 1)
-      val relationResponse = response(0)(randomRelation.name).asInstanceOf[Map[String,List[Map[String,Object]]]]
-      val linkedIds = relationResponse(stargate.keywords.relation.LINK).map(_(ENTITY_ID_COLUMN_NAME))
-      val unlinkedIds = relationResponse(stargate.keywords.relation.UNLINK).map(_(ENTITY_ID_COLUMN_NAME))
+      val relationResponse = response(0)(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
+      val linkedIds = relationResponse.filter(_(keywords.response.RELATION) == keywords.response.RELATION_LINK).map(_(ENTITY_ID_COLUMN_NAME))
+      val unlinkedIds = relationResponse.filter(_(keywords.response.RELATION) == keywords.response.RELATION_UNLINK).map(_(ENTITY_ID_COLUMN_NAME))
       assert(linkedIds == List(randomChild))
       assert(unlinkedIds.length == children.length - 1)
       entity.updatedWith(randomRelation.name)(_.map(_.asInstanceOf[List[Map[String,Object]]].filter(_(ENTITY_ID_COLUMN_NAME) == randomChild)))
@@ -213,10 +216,10 @@ object EntityCRUDTestTrait {
         merge
       } else {
         val requestEntites = request(relation._1).asInstanceOf[List[Map[String,Object]]]
-        val linkResponse = response(relation._1).asInstanceOf[Map[String,Object]]
-        val idResponses = linkResponse(stargate.keywords.relation.LINK).asInstanceOf[List[Map[String,Object]]]
-        assertEquals(requestEntites.length, idResponses.length)
-        val zipped = requestEntites.zip(idResponses).map((req_resp) => zipEntityIds(model, relation._2.targetEntityName, req_resp._1, req_resp._2))
+        val linkedEntities = response(relation._1).asInstanceOf[List[Map[String,Object]]]
+        linkedEntities.foreach(e => assertEquals(e(keywords.response.RELATION), keywords.response.RELATION_LINK))
+        assertEquals(requestEntites.length, linkedEntities.length)
+        val zipped = requestEntites.zip(linkedEntities).map((req_resp) => zipEntityIds(model, relation._2.targetEntityName, req_resp._1, req_resp._2))
         merge ++ Map((relation._1, zipped))
       }
     })

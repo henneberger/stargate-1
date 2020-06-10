@@ -28,7 +28,7 @@ import scala.concurrent.{Await, ExecutionContext}
 trait PredefinedQueryTestTrait extends CassandraTestSession {
 
   @Test
-  def test: Unit = {
+  def predefinedQueryTest: Unit = {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("predefined-query-schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
@@ -42,9 +42,9 @@ trait PredefinedQueryTestTrait extends CassandraTestSession {
     val req = queries.predefined.transform(model.input.queries("getAandB"),  Map((stargate.keywords.mutation.MATCH, Map.empty)))
     val entities = Await.result(stargate.query.getAndTruncate(model, "A", req, 10000, session, executor), Duration.Inf)
     entities.foreach(a => {
-      assertEquals(a.keySet, Set("x", "y", "b"))
+      assertEquals(a.keySet, Set("entityId", "x", "y", "b"))
       a("b").asInstanceOf[List[Map[String,Object]]].foreach(b => {
-        assertEquals(b.keySet, Set("y", "z"))
+        assertEquals(b.keySet, Set("entityId", "y", "z"))
       })
     })
   }

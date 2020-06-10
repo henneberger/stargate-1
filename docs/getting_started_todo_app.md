@@ -165,15 +165,17 @@ Now we’re ready to create and then query our first Todos by User.
     
     Example response:
     ```sh
-    [{
-       "entityId": "b3298af9-2e36-4e7f-8415-688aa4924183",
-       "isComplete": false,
-       "title": "Create a Relation",
-       "user": [{
-           "entityId": "268e0cf2-b896-42ec-98b1-b91c085c7ffd",
-           "username": "John Doe"
-       }]
-    }]
+    {
+        "data": [{
+            "entityId": "b3298af9-2e36-4e7f-8415-688aa4924183",
+            "isComplete": false,
+            "title": "Create a Relation",
+            "user": [{
+                "entityId": "268e0cf2-b896-42ec-98b1-b91c085c7ffd",
+                "username": "John Doe"
+            }]
+        }]
+    }
     ```
 
 4. Update the todo to complete.

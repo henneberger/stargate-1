@@ -24,10 +24,10 @@ import com.typesafe.scalalogging.LazyLogging
 import javax.servlet.http.{HttpServlet, HttpServletRequest, HttpServletResponse}
 import stargate.cassandra.CassandraTable
 import stargate.model.{OutputModel, ScalarComparison, generator, queries}
-import stargate.query.pagination.{StreamEntry, Streams}
+import stargate.query.pagination.{StreamEntry, Streams, TruncateResult}
 import stargate.service.config.StargateConfig
 import stargate.service.metrics.RequestCollector
-import stargate.{cassandra, query, util}
+import stargate.{cassandra, keywords, query, util}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContextExecutor, Future}
@@ -219,9 +219,9 @@ class StargateServlet(
     resp.getWriter.write(util.toJson(Await.result(entities, Duration.Inf)))
   }
 
-  def cacheStreams(truncatedFuture: Future[(List[Map[String, Object]], Streams)]): Future[List[Map[String, Object]]] = {
+  def cacheStreams(truncatedFuture: TruncateResult): Future[Map[String, Object]] = {
     truncatedFuture.map(truncated_streams => {
-      val (truncated, streams) = truncated_streams
+      val (truncated, metadata, streams) = truncated_streams
       streams.foreach(stream => {
         // do not allow cleanup to run until stream is actually added to cache
         val lock = new Semaphore(0)
@@ -239,7 +239,7 @@ class StargateServlet(
         continuationCache.put(stream._1, (stream._2, cleanup))
         lock.release()
       })
-      truncated
+      Map((keywords.response.DATA, truncated), (keywords.response.continue.ROOT, metadata))
     })(executor)
   }
 
@@ -276,21 +276,14 @@ class StargateServlet(
     val payloadMap = Try(payload.asInstanceOf[Map[String, Object]])
     logger.trace(s"query payload: $payload")
 
+    def wrapResponse(o: Object) = Map((keywords.response.DATA, o))
     val result: Future[Object] = op match {
       case "GET" =>
-        val result = query.untyped.getAndTruncate(
-          model,
-          entity,
-          payloadMap.get,
-          sgConfig.defaultLimit,
-          sgConfig.defaultTTL,
-          cqlSession,
-          executor
-        )
+        val result = query.untyped.getAndTruncate(model, entity, payloadMap.get, sgConfig.defaultLimit, sgConfig.defaultTTL, cqlSession, executor)
         cacheStreams(result)
-      case "POST"   => model.mutation.create(entity, payload, cqlSession, executor)
-      case "PUT"    => model.mutation.update(entity, payloadMap.get, cqlSession, executor)
-      case "DELETE" => model.mutation.delete(entity, payloadMap.get, cqlSession, executor)
+      case "POST"   => model.mutation.create(entity, payload, cqlSession, executor).map(wrapResponse)(executor)
+      case "PUT"    => model.mutation.update(entity, payloadMap.get, cqlSession, executor).map(wrapResponse)(executor)
+      case "DELETE" => model.mutation.delete(entity, payloadMap.get, cqlSession, executor).map(wrapResponse)(executor)
       case _        => Future.failed(new RuntimeException(s"unsupported op: $op"))
     }
     logger.trace(op, Await.result(result, Duration.Inf))

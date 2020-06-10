@@ -20,6 +20,7 @@ import com.datastax.oss.driver.api.core.CqlSession
 import stargate.model.queries.parser
 import stargate.model.{Entities, InputModel, OutputModel}
 import stargate.query
+import stargate.query.pagination.TruncateResult
 import stargate.util.AsyncList
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -33,7 +34,7 @@ object untyped {
   }
 
   val get: (OutputModel, String, Map[String, Object], CqlSession, ExecutionContext) => AsyncList[Map[String, Object]] = validateThenQuery(parser.parseGet, query.get)
-  def getAndTruncate(model: OutputModel, entityName: String, payload: Map[String,Object], defaultLimit: Int, defaultTTL: Int, session: CqlSession, executor: ExecutionContext): Future[(List[Map[String,Object]], pagination.Streams)] = {
+  def getAndTruncate(model: OutputModel, entityName: String, payload: Map[String,Object], defaultLimit: Int, defaultTTL: Int, session: CqlSession, executor: ExecutionContext): TruncateResult = {
     query.getAndTruncate(model, entityName, parser.parseGet(model.input.entities, entityName, payload), defaultLimit, defaultTTL, session, executor)
   }
   def getAndTruncate(model: OutputModel, entityName: String, payload: Map[String,Object], defaultLimit: Int, session: CqlSession, executor: ExecutionContext): Future[List[Map[String,Object]]] = {

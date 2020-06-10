@@ -69,7 +69,7 @@ class AsyncList[T] private (private val getValue: () => Future[Option[(T, AsyncL
 
   def filter(f: T=>Boolean, executor: ExecutionContext): AsyncList[T] = {
     new AsyncList[T](() => {
-      stargate.util.flatten(this.value.map(maybeList => {
+      stargate.util.flattenFOFO(this.value.map(maybeList => {
         maybeList.map(list => {
           val tail = list._2.filter(f, executor)
           if(f(list._1)) {

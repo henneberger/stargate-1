@@ -52,7 +52,8 @@ object parser {
     val unusedKeys = payload.keySet.diff(entity.relations.keySet ++ allowedKeywords)
     checkUnusedFields(context, unusedKeys, allowedKeywords, entity.relations.keySet)
     val include: Option[List[String]] = payload.get(INCLUDE).map(cast(INCLUDE +: context, _, classOf[List[String]]))
-    include.foreach(_.foreach(field => require(entity.fields.contains(field), s"Entity ${entity} does not have a field ${field} ${contextMessage(context)}")))
+    include.foreach(_.foreach(field => require(entity.fields.contains(field), s"Entity ${entityName} does not have a field ${field} ${contextMessage(context)}")))
+    include.foreach(fields => require(fields.contains(schema.ENTITY_ID_COLUMN_NAME), s"Included fields ${fields} for entity ${entityName} must contain ${schema.ENTITY_ID_COLUMN_NAME} ${contextMessage(context)}"))
     val relations = entity.relations.values.filter(r => payload.contains(r.name)).map(r =>
       (r.name, parseGetSelection(entities, r.name +: context, r.targetEntityName, cast(r.name +: context, payload(r.name), classOf[Map[String,Object]]))))
     val limit: Option[Int] = payload.get(LIMIT).map(cast(LIMIT +: context, _, classOf[java.lang.Integer]))
