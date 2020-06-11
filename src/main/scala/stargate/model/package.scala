@@ -102,7 +102,8 @@ package object model {
   case class OutputModel(
     input: InputModel,
     entityTables: Map[String, List[CassandraTable]],
-    relationTables: Map[(String,String), CassandraTable]) {
+    relationTables: Map[(String,String), CassandraTable],
+    transactionTable: CassandraTable) {
 
     val baseTables: Map[String, CassandraTable] = entityTables.map(et => (et._1, et._2.find(t => t.name == schema.baseTableName(et._1)).get))
     def tables: List[CassandraTable] = (entityTables.values.flatten ++ relationTables.values).toList

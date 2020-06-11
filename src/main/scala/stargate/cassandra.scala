@@ -78,7 +78,7 @@ object cassandra extends LazyLogging {
     val combined: List[CassandraColumn] = (partitionKeys ++ clusteringKeys)
     val combinedMap: Map[String, CassandraColumn] = partitionKeyMap ++ clusteringKeyMap
     def fullKeyPhysicalValues(values: Map[String,Object]): Map[String,Object] = this.combinedMap.view.mapValues(col => col.physicalValue(values.get(col.name).orNull)).toMap
-
+    def fullKeyLogicalValues(values: Map[String,Object]): Map[String,Object] = this.combinedMap.view.mapValues(col => values.get(col.name).orNull).toMap
   }
 
   /**
