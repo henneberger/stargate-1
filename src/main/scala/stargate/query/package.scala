@@ -44,9 +44,8 @@ package object query {
   }
 
   // for a root-entity and relation path, apply selection conditions to get list of ids of the target entity type
-  def matchEntities(context: Context, rootEntityName: String, relationPath: List[String], conditions: List[ScalarCondition[Object]]): AsyncList[UUID] = {
+  def matchEntities(context: Context, entityName: String, conditions: List[ScalarCondition[Object]]): AsyncList[UUID] = {
     // TODO: when condition is just List((entityId, =, _)) or List((entityId, IN, _)), then return the ids in condition immediately without querying
-    val entityName = schema.traverseEntityPath(context.model.input.entities, rootEntityName, relationPath)
     val entityTables = context.model.entityTables(entityName)
     val tableScores = schema.tableScores(conditions.map(_.named), entityTables)
     val bestScore = tableScores.keys.min
@@ -88,7 +87,8 @@ package object query {
   def matchEntities(context: Context, entityName: String, conditions: GroupedConditions[Object]): AsyncList[UUID] = {
     val groupedEntities = conditions.toList.map(path_conds => {
       val (path, conditions) = path_conds
-      (path, matchEntities(context, entityName, path, conditions))
+      val targetEntityName = schema.traverseEntityPath(context.model.input.entities, entityName, path)
+      (path, matchEntities(context, targetEntityName, conditions))
     }).toMap
     val rootIds = groupedEntities.toList.map(path_ids => resolveReverseRelations(context, entityName, path_ids._1, path_ids._2))
     // TODO: streaming intersection
