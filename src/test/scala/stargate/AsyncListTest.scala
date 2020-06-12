@@ -20,6 +20,7 @@ import org.junit.Test
 import stargate.util.AsyncList
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Random
 
 
 class AsyncListTest {
@@ -106,6 +107,25 @@ class AsyncListTest {
     val t5 = System.currentTimeMillis
     assert(t5 - t4 < tolerance)
     assert(l0flat == l1.get)
+  }
+
+  @Test
+  def testlazyDedupe: Unit = {
+    val sleep = 1
+    val size = 2000
+    val tolerance = 200
+    val executor = util.newCachedExecutor
+    val t0 = System.currentTimeMillis()
+    val al0 = delayedList(sleep, _ => Random.nextInt(3), size)
+    val t1 = System.currentTimeMillis()
+    assert(t1 - t0 < tolerance)
+    val al1 = al0.dedupe(executor)
+    val t2 = System.currentTimeMillis()
+    assert(t2 - t1 < tolerance)
+    val l1 = util.await(al1.toList(executor)).get
+    val t3 = System.currentTimeMillis()
+    within(t3 - t2, sleep*size, size/100*tolerance)
+    assert(l1.size == 3)
   }
 
 

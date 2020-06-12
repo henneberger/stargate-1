@@ -127,6 +127,14 @@ class AsyncList[T] private (private val getValue: () => Future[Option[(T, AsyncL
     (wrapped.map(_._1)(executor), unfuture(wrapped.map(_._2)(executor), executor))
   }
 
+  def dedupe(executor: ExecutionContext): AsyncList[T] = {
+    val set = new java.util.concurrent.ConcurrentHashMap[Option[T], Option[T]]()
+    this.filter(x => {
+      val option = Option(x)
+      set.putIfAbsent(option, option) == null
+    }, executor)
+  }
+
   def toList(executor: ExecutionContext): Future[List[T]] = {
     this.value.flatMap(maybeList => {
       maybeList.map(list => {
