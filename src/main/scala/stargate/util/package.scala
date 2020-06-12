@@ -116,12 +116,9 @@ package object util {
   }
   def sequence[T](os: List[Option[T]]): Option[List[T]] = if(os.contains(None)) None else Some(os.flatten)
 
-  def flattenFOFO[T](fofo: Future[Option[Future[Option[T]]]], executor: ExecutionContext): Future[Option[T]] = {
-    fofo.flatMap(ofo => ofo.getOrElse(Future.successful(None)))(executor)
-  }
-  def flattenFLF[T](flf: Future[List[Future[T]]], executor: ExecutionContext): Future[List[T]] = {
-    flf.flatMap(lf => sequence(lf, executor))(executor)
-  }
+  def flattenFOF[T](fof: Future[Option[Future[T]]], executor: ExecutionContext): Future[Option[T]] = fof.flatMap(of => of.map(f => f.map(Some.apply)(executor)).getOrElse(Future.successful(None)))(executor)
+  def flattenFOFO[T](fofo: Future[Option[Future[Option[T]]]], executor: ExecutionContext): Future[Option[T]] = fofo.flatMap(ofo => ofo.getOrElse(Future.successful(None)))(executor)
+  def flattenFLF[T](flf: Future[List[Future[T]]], executor: ExecutionContext): Future[List[T]] = flf.flatMap(lf => sequence(lf, executor))(executor)
 
   def newCachedExecutor: ExecutionContext = ExecutionContext.fromExecutor(Executors.newCachedThreadPool)
 }
