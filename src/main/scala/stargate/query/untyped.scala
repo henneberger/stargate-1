@@ -18,7 +18,7 @@ package stargate.query
 
 import com.datastax.oss.driver.api.core.CqlSession
 import stargate.model.queries.parser
-import stargate.model.{Entities, InputModel, OutputModel}
+import stargate.model.{Entities, OutputModel}
 import stargate.query
 import stargate.query.pagination.TruncateResult
 import stargate.util.AsyncList
@@ -27,15 +27,15 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object untyped {
 
-  def validateThenQuery[I,V,O](validate: (Entities, String, I) => V, query: (OutputModel, String, V, CqlSession, ExecutionContext) => O): (OutputModel, String, I, CqlSession, ExecutionContext) => O = {
+  def validateThenQuery[I,V,O](validate: (Entities, String, I) => V, query: (Context, String, V) => O): (OutputModel, String, I, CqlSession, ExecutionContext) => O = {
     (model: OutputModel, entityName: String, input: I, session: CqlSession, executor: ExecutionContext) => {
-      query(model, entityName, validate(model.input.entities, entityName, input), session, executor)
+      query(Context(model, session, executor), entityName, validate(model.input.entities, entityName, input))
     }
   }
 
   val get: (OutputModel, String, Map[String, Object], CqlSession, ExecutionContext) => AsyncList[Map[String, Object]] = validateThenQuery(parser.parseGet, query.get)
   def getAndTruncate(model: OutputModel, entityName: String, payload: Map[String,Object], defaultLimit: Int, defaultTTL: Int, session: CqlSession, executor: ExecutionContext): TruncateResult = {
-    query.getAndTruncate(model, entityName, parser.parseGet(model.input.entities, entityName, payload), defaultLimit, defaultTTL, session, executor)
+    query.getAndTruncate(Context(model, session, executor), entityName, parser.parseGet(model.input.entities, entityName, payload), defaultLimit, defaultTTL)
   }
   def getAndTruncate(model: OutputModel, entityName: String, payload: Map[String,Object], defaultLimit: Int, session: CqlSession, executor: ExecutionContext): Future[List[Map[String,Object]]] = {
     getAndTruncate(model, entityName, payload, defaultLimit, 0, session, executor).map(_._1)(executor)

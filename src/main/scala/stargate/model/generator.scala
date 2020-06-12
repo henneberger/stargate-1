@@ -104,7 +104,7 @@ object generator {
   def specificMatchCondition(model: OutputModel, entityName: String, maxTerms: Int, session: CqlSession, executor: ExecutionContext): Future[List[ScalarCondition[Object]]] = {
     val entity = model.input.entities(entityName)
     val query = GetQuery(schema.MATCH_ALL_CONDITION, GetSelection(entity.relations.view.mapValues(_ => GetSelection.empty).toMap, None, None, continue = false, None))
-    val entities = stargate.query.get(model, entityName, query, session, executor)
+    val entities = stargate.query.get(stargate.query.Context(model, session, executor), entityName, query)
     val random = randomMatchCondition(model.input.entities, entityName, maxTerms)
     entities.take(1, executor).flatMap(entities => {
       if(entities.isEmpty) {

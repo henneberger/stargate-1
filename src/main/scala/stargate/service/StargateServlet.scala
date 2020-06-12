@@ -206,13 +206,11 @@ class StargateServlet(
     require(query.isSuccess, s"""no such query "$queryName" for database "$appName" """)
     val runtimePayload = queries.predefined.transform(query.get, payloadMap)
     val result = stargate.query.getAndTruncate(
-      model,
+      stargate.query.Context(model, cqlSession, executor),
       query.get.entityName,
       runtimePayload,
       sgConfig.defaultLimit,
-      sgConfig.defaultTTL,
-      cqlSession,
-      executor
+      sgConfig.defaultTTL
     )
     val entities = cacheStreams(result)
     resp.setContentType("application/json")
