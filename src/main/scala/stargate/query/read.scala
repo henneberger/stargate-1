@@ -95,12 +95,12 @@ object read {
     rows.map(_.getUuid(schema.RELATION_TO_COLUMN_NAME), executor)
   }
 
-  def entityIdToObject(model: OutputModel, entityName: String, maybeColumns: Option[List[String]], id: UUID, session: CqlSession, executor: ExecutionContext): Future[Option[Map[String,Object]]] = {
-    val baseTable = model.baseTables(entityName)
+  def entityIdToObject(context: Context, entityName: String, maybeColumns: Option[List[String]], id: UUID): Future[Option[Map[String,Object]]] = {
+    val baseTable = context.model.baseTables(entityName)
     val select = selectStatement(baseTable.keyspace, baseTable.name, maybeColumns, List(ScalarCondition[Object](schema.ENTITY_ID_COLUMN_NAME, ScalarComparison.EQ, id)))
-    cassandra.queryAsync(session, select.build, executor).maybeHead(executor).map(_.map(cassandra.rowToMap))(executor)
+    cassandra.queryAsync(context.session, select.build, context.executor).maybeHead(context.executor).map(_.map(cassandra.rowToMap))(context.executor)
   }
-  def entityIdToObject(model: OutputModel, entityName: String, id: UUID, session: CqlSession, executor: ExecutionContext): Future[Option[Map[String, Object]]] = {
-    entityIdToObject(model, entityName, None, id, session, executor)
+  def entityIdToObject(context: Context, entityName: String, id: UUID): Future[Option[Map[String, Object]]] = {
+    entityIdToObject(context, entityName, None, id)
   }
 }
