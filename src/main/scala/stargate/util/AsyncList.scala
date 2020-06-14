@@ -200,6 +200,14 @@ object AsyncList {
     })
   }
 
+  def contiguousGroups[T, K](list: AsyncList[T], key: T=>K, executor: ExecutionContext): AsyncList[List[T]] = {
+    AsyncList(() => stargate.util.flattenFOF(list.value.map(_.map(head_tail => {
+      val headKey = key(head_tail._1)
+      val (matching, remaining) = head_tail._2.span(x => key(x) == headKey, executor)
+      matching.map(m => (head_tail._1 +: m, contiguousGroups(remaining, key, executor)))(executor)
+    }))(executor), executor))
+  }
+
   def filterSome[T](list: AsyncList[Option[T]], executor: ExecutionContext): AsyncList[T] = {
     list.filter(_.isDefined, executor).map(_.get, executor)
   }
