@@ -16,12 +16,8 @@
 
 package stargate.query
 
-import java.lang
 import java.util.UUID
 
-import stargate.model.{OutputModel, ScalarComparison, ScalarCondition}
-import stargate.util.AsyncList
-import stargate.{cassandra, schema}
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.querybuilder.QueryBuilder
 import com.datastax.oss.driver.api.querybuilder.relation.OngoingWhereClause
@@ -29,12 +25,33 @@ import com.datastax.oss.driver.api.querybuilder.select.{Select, SelectFrom}
 import com.datastax.oss.driver.api.querybuilder.term.Term
 import com.datastax.oss.driver.internal.core.util.Strings
 import stargate.cassandra.{CassandraColumn, CassandraTable}
+import stargate.model.{ScalarComparison, ScalarCondition}
+import stargate.util.AsyncList
+import stargate.{cassandra, schema}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 
 // functions used to implement stargate queries
 object read {
+
+  def checkCondition(row: Map[String,Object], condition: ScalarCondition[Object]): Boolean = {
+    val column = row.get(condition.field).orNull.asInstanceOf[Comparable[Object]]
+    val argument = condition.argument
+    def listArgument: List[Object] = argument.asInstanceOf[List[Object]]
+    def nonNull = column == null || argument == null
+    def bothNull = column == null && argument == null
+    def comparison = column.compareTo(argument)
+    condition.comparison match {
+      case ScalarComparison.LT => nonNull && comparison < 0
+      case ScalarComparison.LTE => nonNull && comparison <= 0
+      case ScalarComparison.EQ => bothNull || (nonNull && comparison == 0)
+      case ScalarComparison.GTE => nonNull && comparison >= 0
+      case ScalarComparison.GT => nonNull && comparison > 0
+      case ScalarComparison.IN => argument != null && listArgument.contains(column)
+    }
+  }
+  def checkConditions(row: Map[String,Object], conditions: List[ScalarCondition[Object]]): Boolean = conditions.forall(c => checkCondition(row, c))
 
   def appendWhere[T <: OngoingWhereClause[T]](select: T, condition: ScalarCondition[Object]): T = {
     val where = select.whereColumn(Strings.doubleQuote(condition.field))
