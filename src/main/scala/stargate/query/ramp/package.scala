@@ -6,7 +6,9 @@ import com.datastax.oss.driver.api.core.CqlSession
 import stargate.model.{OutputModel, ScalarCondition}
 import stargate.{query, schema}
 import stargate.query.ramp.read
+import stargate.schema.GroupedConditions
 import stargate.util.AsyncList
+import stargate.util
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -39,6 +41,22 @@ package object ramp {
     val potentialEntities = potentialIds.map(id => ramp.read.entityIdToLastValidState(context, transactionId, entityName, id), executor)
     ramp.read.flatten(potentialEntities, executor).map(_.map(_.filter(query.read.checkConditions(_, conditions))))(executor)
   }
+  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: GroupedConditions[Object]): ramp.read.MaybeRead[UUID] = {
+    val groupedEntities = conditions.toList.map(path_conds => {
+      val (path, conditions) = path_conds
+      val targetEntityName = schema.traverseEntityPath(context.model.input.entities, entityName, path)
+      (path, matchEntities(context, transactionId, targetEntityName, conditions).map(_.map(_.map(_(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])))(context.executor))
+    }).toMap
+    val rootIds = util.sequence(groupedEntities.toList.map(path_ids => resolveReverseRelations(context, transactionId, entityName, path_ids._1, path_ids._2)), context.executor)
+    rootIds.map(rootIds => {
+      if(rootIds.exists(_.isEmpty)) {
+        None
+      } else {
+        Some(rootIds.map(_.get).map(_.toSet).reduce(_.intersect(_)).toList)
+      }
+    })(context.executor)
+  }
+
 
 
   def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: ramp.read.MaybeRead[UUID]): ramp.read.MaybeRead[UUID] = {
