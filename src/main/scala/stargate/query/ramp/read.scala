@@ -7,7 +7,7 @@ import stargate.model.{ScalarComparison, ScalarCondition}
 import stargate.util.AsyncList
 import stargate.{cassandra, query, schema}
 
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 
 object read {
 
@@ -32,20 +32,24 @@ object read {
     }).getOrElse(Future.successful(Some(List.empty)))
   }
 
+  def flatten[T](maybeReads: AsyncList[MaybeRead[T]], executor: ExecutionContext): MaybeRead[T] = {
+    val unwrapped = AsyncList.unfuture(maybeReads, executor)
+    val anyFailed = unwrapped.filter(_.isEmpty, executor).isEmpty(executor)
+    anyFailed.flatMap(anyFailed => {
+      if(anyFailed) {
+        Future.successful(None)
+      } else {
+        unwrapped.toList(executor).map(list => Some(list.flatMap(_.get)))(executor)
+      }
+    })(executor)
+  }
+
   def filterLastValidStates(context: Context, before: UUID, rows: AsyncList[Map[String,Object]], key: CassandraKey): MaybeReadRows = {
     val executor = context.executor
     val keyWithoutTransactionId = key.combinedMap.removed(schema.TRANSACTION_ID_COLUMN_NAME)
     def groupKey(entity: Map[String,Object]) = keyWithoutTransactionId.view.mapValues(c => entity.get(c.name).orNull)
     val grouped = AsyncList.contiguousGroups(rows, groupKey, executor)
-    val filteredGroups = AsyncList.unfuture(grouped.map(filterLastValidState(context, before, _), executor), executor)
-    val anyFailed = filteredGroups.filter(_.isEmpty, executor).isEmpty(executor)
-    anyFailed.flatMap(anyFailed => {
-      if(anyFailed) {
-        Future.successful(None)
-      } else {
-        filteredGroups.toList(executor).map(list => Some(list.flatMap(_.get)))(executor)
-      }
-    })(executor)
+    flatten(grouped.map(filterLastValidState(context, before, _), executor), executor)
   }
 
   def resolveRelation(context: Context, before: UUID, entityName: String, fromIds: List[UUID], relationName: String): MaybeRead[UUID] = {

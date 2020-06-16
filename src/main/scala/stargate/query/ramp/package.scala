@@ -4,7 +4,8 @@ import java.util.UUID
 
 import com.datastax.oss.driver.api.core.CqlSession
 import stargate.model.{OutputModel, ScalarCondition}
-import stargate.query
+import stargate.{query, schema}
+import stargate.query.ramp.read
 import stargate.util.AsyncList
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -32,11 +33,32 @@ package object ramp {
     val queryContext = query.Context(model, session, executor)
   }
 
-  def matchEntities(context: Context, transactionId: UUID, rootEntityName: String, relationPath: List[String], conditions: List[ScalarCondition[Object]]): AsyncList[Map[String,Object]] = {
-    val potentialIds = query.matchEntities(context.queryContext, rootEntityName, relationPath, conditions).dedupe(context.executor)
-    val entities = potentialIds.map(id => {
+  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: List[ScalarCondition[Object]]): ramp.read.MaybeReadRows = {
+    val executor = context.executor
+    val potentialIds = query.matchEntities(context.queryContext, entityName, conditions).dedupe(executor)
+    val potentialEntities = potentialIds.map(id => ramp.read.entityIdToLastValidState(context, transactionId, entityName, id), executor)
+    ramp.read.flatten(potentialEntities, executor).map(_.map(_.filter(query.read.checkConditions(_, conditions))))(executor)
+  }
 
-    })
+
+  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: ramp.read.MaybeRead[UUID]): ramp.read.MaybeRead[UUID] = {
+    if(relationPath.isEmpty) {
+      ids
+    } else {
+      val relationName = relationPath.head
+      val next = stargate.util.flattenFOFO(ids.map(_.map(ids => ramp.read.resolveRelation(context, transactionId, entityName, ids, relationName)))(context.executor), context.executor)
+      resolveRelations(context, transactionId, context.model.input.entities(entityName).relations(relationName).targetEntityName, relationPath.tail, next)
+    }
+  }
+  def resolveReverseRelations(context: Context, transactionId: UUID, rootEntityName: String, relationPath: List[String], relatedIds: ramp.read.MaybeRead[UUID]): ramp.read.MaybeRead[UUID] = {
+    if(relationPath.isEmpty) {
+      relatedIds
+    } else {
+      val relations = schema.traverseRelationPath(context.model.input.entities, rootEntityName, relationPath).reverse
+      val newRootEntityName = relations.head.targetEntityName
+      val inversePath = relations.map(_.inverseName)
+      resolveRelations(context, transactionId, newRootEntityName, inversePath, relatedIds)
+    }
   }
 
 }
