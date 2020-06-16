@@ -2,39 +2,68 @@ package stargate.query.ramp
 
 import java.util.UUID
 
+import stargate.cassandra.{CassandraKey, CassandraTable}
+import stargate.model.{ScalarComparison, ScalarCondition}
+import stargate.util.AsyncList
 import stargate.{cassandra, query, schema}
 
 import scala.concurrent.Future
 
 object read {
 
+  type MaybeRead[T] = Future[Option[List[T]]]
+  type MaybeReadRows = MaybeRead[Map[String,Object]]
+
+  def filterLastValidState(context: Context, before: UUID, states: List[Map[String,Object]]): MaybeReadRows = {
+    val beforeStates = states.reverse.dropWhile(_(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID].compareTo(before) < 0)
+    beforeStates.headOption.map(head => {
+      val transactionId = head(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID]
+      context.getState(transactionId).map(status => {
+        def isDeleted = head.get(schema.TRANSACTION_DELETED_COLUMN_NAME).map(_.asInstanceOf[java.lang.Boolean]).getOrElse(java.lang.Boolean.FALSE)
+        if(status == TransactionState.SUCCESS) {
+          if(isDeleted) {
+            Some(List.empty)
+          } else
+            Some(List(head))
+        } else {
+          None
+        }
+      })(context.executor)
+    }).getOrElse(Future.successful(Some(List.empty)))
+  }
+
+  def filterLastValidStates(context: Context, before: UUID, rows: AsyncList[Map[String,Object]], key: CassandraKey): MaybeReadRows = {
+    val executor = context.executor
+    val keyWithoutTransactionId = key.combinedMap.removed(schema.TRANSACTION_ID_COLUMN_NAME)
+    def groupKey(entity: Map[String,Object]) = keyWithoutTransactionId.view.mapValues(c => entity.get(c.name).orNull)
+    val grouped = AsyncList.contiguousGroups(rows, groupKey, executor)
+    val filteredGroups = AsyncList.unfuture(grouped.map(filterLastValidState(context, before, _), executor), executor)
+    val anyFailed = filteredGroups.filter(_.isEmpty, executor).isEmpty(executor)
+    anyFailed.flatMap(anyFailed => {
+      if(anyFailed) {
+        Future.successful(None)
+      } else {
+        filteredGroups.toList(executor).map(list => Some(list.flatMap(_.get)))(executor)
+      }
+    })(executor)
+  }
+
+  def resolveRelation(context: Context, before: UUID, entityName: String, fromIds: List[UUID], relationName: String): MaybeRead[UUID] = {
+    val table = context.model.relationTables((entityName, relationName))
+    val conditions = List(ScalarCondition[Object](schema.RELATION_FROM_COLUMN_NAME, ScalarComparison.IN, fromIds))
+    val rows = cassandra.queryAsyncMaps(context.session, query.read.selectStatement(table.keyspace, table.name, conditions).build, context.executor)
+    val validStates = filterLastValidStates(context, before, rows, table.columns.key)
+    validStates.map(_.map(rows => rows.map(_(schema.RELATION_TO_COLUMN_NAME).asInstanceOf[UUID])))(context.executor)
+  }
+
   def entityIdToObjectStates(context: query.Context, entityName: String, id: UUID): Future[List[Map[String,Object]]] = {
     val baseTable = context.model.baseTables(entityName)
     val select = query.read.selectStatement(baseTable, Map((schema.ENTITY_ID_COLUMN_NAME, id)))
-    cassandra.queryAsync(context.session, select.build, context.executor).map(cassandra.rowToMap, context.executor).toList(context.executor)
+    cassandra.queryAsyncMaps(context.session, select.build, context.executor).toList(context.executor)
   }
 
-  def entityIdToLastValidState(context: Context, before: UUID, entityName: String, id: UUID): Future[Option[Map[String,Object]]] = {
+  def entityIdToLastValidState(context: Context, before: UUID, entityName: String, id: UUID): MaybeReadRows = {
     val states = entityIdToObjectStates(context.queryContext, entityName, id)
-    states.flatMap(states => {
-      val beforeStates = states.reverse.dropWhile(_(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID].compareTo(before) < 0)
-      def isHeadValid(states: List[Map[String,Object]]): Future[Option[Map[String,Object]]] = {
-        states.headOption.map(head => {
-          val isValid = context.getState(head(schema.TRANSACTION_ID_COLUMN_NAME)).map(_ == TransactionState.SUCCESS)(context.executor)
-          isValid.flatMap(isValid => {
-            if(isValid) {
-              if(head.get(schema.TRANSACTION_DELETED_COLUMN_NAME).map(_.asInstanceOf[java.lang.Boolean]).getOrElse(java.lang.Boolean.FALSE)) {
-                Future.successful(Some(head))
-              } else {
-                Future.successful(None)
-              }
-            } else {
-              isHeadValid(states.tail)
-            }
-          })(context.executor)
-        }).getOrElse(Future.successful(None))
-      }
-      isHeadValid(beforeStates)
-    })(context.executor)
+    states.flatMap(filterLastValidState(context, before, _))(context.executor)
   }
 }
