@@ -157,6 +157,10 @@ object cassandra extends LazyLogging {
     convertAsyncResultSet(cqlSession.executeAsync(statement), executor)
   }
 
+  def queryAsyncMaps(cqlSession: CqlSession, statement: Statement[_], executor: ExecutionContext): PagedResults[Map[String,Object]] = {
+    queryAsync(cqlSession, statement, executor).map(rowToMap, executor)
+  }
+
   /**
     * executes a generic CQL query in an asynchronous fashion
     *
