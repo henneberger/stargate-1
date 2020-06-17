@@ -3,7 +3,9 @@ package stargate.query
 import java.util.UUID
 
 import com.datastax.oss.driver.api.core.CqlSession
+import stargate.model.queries.{GetQuery, GetSelection}
 import stargate.model.{OutputModel, ScalarCondition}
+import stargate.query.pagination.TruncateResult
 import stargate.{query, schema}
 import stargate.query.ramp.read
 import stargate.schema.GroupedConditions
@@ -68,6 +70,9 @@ package object ramp {
       resolveRelations(context, transactionId, context.model.input.entities(entityName).relations(relationName).targetEntityName, relationPath.tail, next)
     }
   }
+  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): ramp.read.MaybeRead[UUID] = {
+    resolveRelations(context, transactionId, entityName, relationPath, Future.successful(Some(ids)))
+  }
   def resolveReverseRelations(context: Context, transactionId: UUID, rootEntityName: String, relationPath: List[String], relatedIds: ramp.read.MaybeRead[UUID]): ramp.read.MaybeRead[UUID] = {
     if(relationPath.isEmpty) {
       relatedIds
@@ -78,5 +83,35 @@ package object ramp {
       resolveRelations(context, transactionId, newRootEntityName, inversePath, relatedIds)
     }
   }
+  def resolveReverseRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): ramp.read.MaybeRead[UUID] = {
+    resolveReverseRelations(context, transactionId, entityName, relationPath, Future.successful(Some(ids)))
+  }
+
+
+  def getEntitiesAndRelated(context: Context, transactionId: UUID, entityName: String, ids: ramp.read.MaybeRead[UUID], payload: GetSelection): ramp.read.MaybeReadRows = {
+    val executor = context.executor
+    val relations = context.model.input.entities(entityName).relations
+    val results = ids.map(_.map(_.map(id => {
+      val futureMaybeEntity = ramp.read.entityIdToLastValidState(context, transactionId, entityName, id)
+      val entityAndRelations = futureMaybeEntity.map(_.map(_.map(entity => {
+        val related = payload.relations.toList.map(name_selection => {
+          val (relationName, nestedSelection) = name_selection
+          val childIds = resolveRelations(context, transactionId, entityName, List(relationName), List(id))
+          val recurse = getEntitiesAndRelated(context, transactionId, relations(relationName).targetEntityName, childIds, nestedSelection)
+          recurse.map(_.map(result => (relationName, result)))(executor)
+        })
+        val sequencedRelated = util.sequence(related, executor).map(relations => util.sequence(relations))(executor)
+        sequencedRelated.map(_.map(relation_children => entity ++ relation_children))(executor)
+      })))(executor)
+      util.flattenFOLFO(entityAndRelations, executor)
+    })))(executor)
+    util.flattenFOLFOL(results, executor)
+  }
+  def get(context: Context, transactionId: UUID, entityName: String, payload: GetQuery): ramp.read.MaybeReadRows = {
+    val ids = matchEntities(context, transactionId, entityName, payload.`match`)
+    getEntitiesAndRelated(context, transactionId, entityName, ids, payload.selection)
+  }
+
+
 
 }
