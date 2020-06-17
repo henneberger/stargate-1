@@ -52,12 +52,14 @@ object read {
     flatten(grouped.map(filterLastValidState(context, before, _), executor), executor)
   }
 
-  def resolveRelation(context: Context, before: UUID, entityName: String, fromIds: List[UUID], relationName: String): MaybeRead[UUID] = {
+  def resolveRelation(context: Context, before: UUID, entityName: String, fromIds: List[UUID], relationName: String): MaybeReadRows = {
     val table = context.model.relationTables((entityName, relationName))
     val conditions = List(ScalarCondition[Object](schema.RELATION_FROM_COLUMN_NAME, ScalarComparison.IN, fromIds))
     val rows = cassandra.queryAsyncMaps(context.session, query.read.selectStatement(table.keyspace, table.name, conditions).build, context.executor)
-    val validStates = filterLastValidStates(context, before, rows, table.columns.key)
-    validStates.map(_.map(rows => rows.map(_(schema.RELATION_TO_COLUMN_NAME).asInstanceOf[UUID])))(context.executor)
+    filterLastValidStates(context, before, rows, table.columns.key)
+  }
+  def resolveRelationIds(context: Context, before: UUID, entityName: String, fromIds: List[UUID], relationName: String): MaybeRead[UUID] = {
+    resolveRelation(context, before, entityName, fromIds, relationName).map(_.map(_.map(_(schema.RELATION_TO_COLUMN_NAME).asInstanceOf[UUID])))(context.executor)
   }
 
   def entityIdToObjectStates(context: query.Context, entityName: String, id: UUID): Future[List[Map[String,Object]]] = {
