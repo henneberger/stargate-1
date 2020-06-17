@@ -43,7 +43,7 @@ package object query {
     })(executor)
   }
 
-  // for a root-entity and relation path, apply selection conditions to get list of ids of the target entity type
+  // for a single entity, apply selection conditions to get list of ids of the target entity type
   def matchEntities(context: Context, entityName: String, conditions: List[ScalarCondition[Object]]): AsyncList[UUID] = {
     // TODO: when condition is just List((entityId, =, _)) or List((entityId, IN, _)), then return the ids in condition immediately without querying
     val entityTables = context.model.entityTables(entityName)
@@ -57,6 +57,20 @@ package object query {
       selection = selection.allowFiltering
     }
     cassandra.queryAsync(context.session, selection.build, context.executor).map(_.getUuid(Strings.doubleQuote(schema.ENTITY_ID_COLUMN_NAME)), context.executor)
+  }
+  // for a root-entity and relation path, apply selection conditions to get related entity ids, then walk relation tables in reverse to get ids of the root entity type
+  def matchEntities(context: Context, entityName: String, conditions: GroupedConditions[Object]): AsyncList[UUID] = {
+    val groupedEntities = conditions.toList.map(path_conds => {
+      val (path, conditions) = path_conds
+      val targetEntityName = schema.traverseEntityPath(context.model.input.entities, entityName, path)
+      (path, matchEntities(context, targetEntityName, conditions))
+    }).toMap
+    val rootIds = groupedEntities.toList.map(path_ids => resolveReverseRelations(context, entityName, path_ids._1, path_ids._2))
+    // TODO: streaming intersection
+    val sets = rootIds.map(_.toList(context.executor).map(_.toSet)(context.executor))
+    implicit val ec: ExecutionContext = context.executor
+    // technically no point in returning a lazy AsyncList since intersection is being done eagerly - just future proofing for when this is made streaming later
+    AsyncList.unfuture(Future.sequence(sets).map(_.reduce(_.intersect(_))).map(set => AsyncList.fromList(set.toList)), context.executor)
   }
 
   // starting with an entity type and a set of ids for that type, walk the relation-path to find related entity ids of the final type in the path
@@ -82,22 +96,6 @@ package object query {
       resolveRelations(context, newRootEntityName, inversePath, relatedIds)
     }
   }
-
-  // for a root-entity and relation path, apply selection conditions to get related entity ids, then walk relation tables in reverse to get ids of the root entity type
-  def matchEntities(context: Context, entityName: String, conditions: GroupedConditions[Object]): AsyncList[UUID] = {
-    val groupedEntities = conditions.toList.map(path_conds => {
-      val (path, conditions) = path_conds
-      val targetEntityName = schema.traverseEntityPath(context.model.input.entities, entityName, path)
-      (path, matchEntities(context, targetEntityName, conditions))
-    }).toMap
-    val rootIds = groupedEntities.toList.map(path_ids => resolveReverseRelations(context, entityName, path_ids._1, path_ids._2))
-    // TODO: streaming intersection
-    val sets = rootIds.map(_.toList(context.executor).map(_.toSet)(context.executor))
-    implicit val ec: ExecutionContext = context.executor
-    // technically no point in returning a lazy AsyncList since intersection is being done eagerly - just future proofing for when this is made streaming later
-    AsyncList.unfuture(Future.sequence(sets).map(_.reduce(_.intersect(_))).map(set => AsyncList.fromList(set.toList)), context.executor)
-  }
-
 
   def getEntitiesAndRelated(context: Context, entityName: String, ids: AsyncList[UUID], payload: GetSelection): AsyncList[Map[String,Object]] = {
     val relations = context.model.input.entities(entityName).relations
