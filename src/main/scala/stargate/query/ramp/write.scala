@@ -20,7 +20,7 @@ object write {
   type RampRows = List[(CassandraTable, Map[String,Object])]
   case class WriteResult(success: Boolean, writes: RampRows, cleanup: RampRows)
 
-  
+
 
   def createEntity(tables: List[CassandraTable], payload: Map[String,Object]): (UUID, List[InsertOp]) = {
     val uuid = UUID.randomUUID()

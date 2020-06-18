@@ -8,6 +8,7 @@ import stargate.model.{OutputModel, ScalarCondition}
 import stargate.query.ramp.read.MaybeReadRows
 import stargate.query.ramp.write.WriteOp
 import stargate.schema.GroupedConditions
+import stargate.util.AsyncList
 import stargate.{keywords, query, schema, util}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -152,7 +153,7 @@ package object ramp {
   }
 
   def createOne(context: Context, transactionId: UUID, entityName: String, payload: CreateOneMutation): MutationResult = {
-    val (uuid, creates) = ramp.write.createEntity(context.model.entityTables(entityName), payload.fields)
+    val (uuid, creates) = ramp.write.createEntity(context.model.entityTables(entityName), payload.fields.updated(schema.TRANSACTION_ID_COLUMN_NAME, transactionId))
     val linkWrapped = payload.relations.map((rm: (String,Mutation)) => (rm._1, LinkMutation(rm._2)))
     val linkResults = mutateAndLinkRelations(context, transactionId, entityName, uuid, linkWrapped)
     val createResult = linkResults.map(_.map(linkResult => (linkResult._1, creates ++ linkResult._2)))(context.executor)
@@ -169,18 +170,40 @@ package object ramp {
     ids.map(_.map(ids => (ids.map(id => query.write.entityIdPayload(id).updated(keywords.response.ACTION, keywords.response.ACTION_UPDATE)), List.empty)))(context.executor)
   }
 
+  def update(context: Context, transactionId: UUID, entityName: String, ids: ramp.read.MaybeRead[UUID], payload: UpdateMutation): MutationResult = {
+    val executor = context.executor
+    val updateAll = ids.map(_.map(_.map( id => {
+      val state = ramp.read.entityIdToLastValidState(context, transactionId, entityName, id)
+      val updateOne = state.map(_.map(_.map(currentEntity => {
+        val updates = ramp.write.updateEntity(context.model.entityTables(entityName), currentEntity, payload.fields.updated(schema.TRANSACTION_ID_COLUMN_NAME, transactionId))
+        val linkResults = mutateAndLinkRelations(context, transactionId, entityName, id, payload.relations)
+        linkResults.map(_.map(linkResult => (linkResult._1, updates ++ linkResult._2)))(executor)
+      })))(executor)
+      util.flattenFOLFO(updateOne, executor)
+    })))(executor)
+    val result = util.flattenFOLFO(updateAll, executor)
+    result.map(_.map(lists => {
+      val flat = lists.flatten
+      (flat.flatMap(_._1), flat.flatMap(_._2))
+    }))(executor)
+  }
+  def update(context: Context, transactionId: UUID, entityName: String, payload: UpdateMutation): MutationResult = {
+    val ids = matchEntities(context, transactionId, entityName, payload.`match`)
+    val result = update(context, transactionId, entityName, ids, payload)
+    addResponseMetadata(result, keywords.response.ACTION, keywords.response.ACTION_UPDATE, context.executor)
+  }
 
 
   def mutation(context: Context, transactionId: UUID, entityName: String, payload: Mutation): MutationResult = {
     payload match {
       case createReq: CreateMutation => create(context, transactionId, entityName, createReq)
-      case `match`: MatchMutation => matchMutation(context, transactionId,, entityName, `match`)
+      case `match`: MatchMutation => matchMutation(context, transactionId, entityName, `match`)
       case updateReq: UpdateMutation => update(context, transactionId, entityName, updateReq)
     }
   }
 
   def unlinkObject(relationRow: Map[String,Object]): Map[String,Object] = {
-    Map[String,Object]((schema.ENTITY_ID_COLUMN_NAME, relationRow(schema.RELATION_TO_COLUMN_NAME),
+    Map[String,Object]((schema.ENTITY_ID_COLUMN_NAME, relationRow(schema.RELATION_TO_COLUMN_NAME)),
       (schema.TRANSACTION_ID_COLUMN_NAME, relationRow(schema.TRANSACTION_ID_COLUMN_NAME)),
       (keywords.response.ACTION, keywords.response.ACTION_UPDATE),
       (keywords.response.RELATION, keywords.response.RELATION_UNLINK))
