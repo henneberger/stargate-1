@@ -5,6 +5,7 @@ import java.util.UUID
 import com.datastax.oss.driver.api.core.CqlSession
 import stargate.model.queries._
 import stargate.model.{OutputModel, ScalarCondition}
+import stargate.query.ramp.read.MaybeReadRows
 import stargate.query.ramp.write.WriteOp
 import stargate.schema.GroupedConditions
 import stargate.{keywords, query, schema, util}
@@ -35,11 +36,13 @@ package object ramp {
   type MutationResult = Future[Option[(List[Map[String,Object]], List[ramp.write.WriteOp])]]
 
 
-
-  def addResponseMetadata(result: MutationResult, key: String, value: String, executor: ExecutionContext): MutationResult = {
+  def addResponseMetadata(result: MutationResult, metadata: Map[String,Object], executor: ExecutionContext): MutationResult = {
     result.map(_.map(entities_statements => {
-      (entities_statements._1.map(entity => entity.updated(key, value)), entities_statements._2)
+      (entities_statements._1.map(entity => entity ++ metadata), entities_statements._2)
     }))(executor)
+  }
+  def addResponseMetadata(result: MutationResult, key: String, value: String, executor: ExecutionContext): MutationResult = {
+    addResponseMetadata(result, Map((key, value)), executor)
   }
 
   def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: List[ScalarCondition[Object]]): ramp.read.MaybeReadRows = {
@@ -55,13 +58,7 @@ package object ramp {
       (path, matchEntities(context, transactionId, targetEntityName, conditions).map(_.map(_.map(_(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])))(context.executor))
     }).toMap
     val rootIds = util.sequence(groupedEntities.toList.map(path_ids => resolveReverseRelations(context, transactionId, entityName, path_ids._1, path_ids._2)), context.executor)
-    rootIds.map(rootIds => {
-      if(rootIds.exists(_.isEmpty)) {
-        None
-      } else {
-        Some(rootIds.map(_.get).map(_.toSet).reduce(_.intersect(_)).toList)
-      }
-    })(context.executor)
+    rootIds.map(rootIds => util.sequence(rootIds).map(idLists => idLists.map(_.toSet).reduce(_.intersect(_)).toList))(context.executor)
   }
 
 
@@ -167,12 +164,63 @@ package object ramp {
     util.sequence(creates, context.executor).map(lists => util.sequence(lists).map(data_ops => (data_ops.flatMap(_._1), data_ops.flatMap(_._2))))(context.executor)
   }
 
+  def matchMutation(context: Context, transactionId: UUID, entityName: String, payload: MatchMutation): MutationResult = {
+    val ids = matchEntities(context, transactionId, entityName, payload.`match`)
+    ids.map(_.map(ids => (ids.map(id => query.write.entityIdPayload(id).updated(keywords.response.ACTION, keywords.response.ACTION_UPDATE)), List.empty)))(context.executor)
+  }
 
+
+
+  def mutation(context: Context, transactionId: UUID, entityName: String, payload: Mutation): MutationResult = {
+    payload match {
+      case createReq: CreateMutation => create(context, transactionId, entityName, createReq)
+      case `match`: MatchMutation => matchMutation(context, transactionId,, entityName, `match`)
+      case updateReq: UpdateMutation => update(context, transactionId, entityName, updateReq)
+    }
+  }
+
+  def unlinkObject(relationRow: Map[String,Object]): Map[String,Object] = {
+    Map[String,Object]((schema.ENTITY_ID_COLUMN_NAME, relationRow(schema.RELATION_TO_COLUMN_NAME),
+      (schema.TRANSACTION_ID_COLUMN_NAME, relationRow(schema.TRANSACTION_ID_COLUMN_NAME)),
+      (keywords.response.ACTION, keywords.response.ACTION_UPDATE),
+      (keywords.response.RELATION, keywords.response.RELATION_UNLINK))
+  }
+  def linkMutation(context: Context, transactionId: UUID, entityName: String, payload: Mutation): MutationResult = {
+    val result = mutation(context, transactionId, entityName, payload)
+    addResponseMetadata(result, keywords.response.RELATION, keywords.response.RELATION_LINK, context.executor)
+  }
+  def unlinkMutation(context: Context, transactionId: UUID, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, `match`: GroupedConditions[Object]): MutationResult = {
+    val matchIds = matchEntities(context, transactionId, entityName, `match`)
+    val relations = ramp.read.resolveRelation(context, transactionId, parentEntityName, List(parentId), parentRelation)
+    val result = relations.map(_.map(relations => {
+      matchIds.map(_.map(matchIds => {
+        val matchIdSet = matchIds.toSet
+        val matchingRelations = relations.filter(r => matchIdSet(r(schema.RELATION_TO_COLUMN_NAME).asInstanceOf[UUID]))
+        (matchingRelations.map(unlinkObject), List.empty)
+      }))(context.executor)
+    }))(context.executor)
+    util.flattenFOFO(result, context.executor)
+  }
+  def replaceMutation(context: Context, transactionId: UUID, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: Mutation): MutationResult = {
+    val linkMutationResult = mutation(context, transactionId, entityName, payload)
+    val result = linkMutationResult.map(_.map(linked_statements => {
+      val (mutationObjects, mutationStatements) = linked_statements
+      val linkIds = mutationObjects.map(_(stargate.schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID]).toSet
+      val relations = ramp.read.resolveRelation(context, transactionId, parentEntityName, List(parentId), parentRelation)
+      val unlinkRelations = relations.map(_.map(_.filter(r => linkIds(r(schema.RELATION_TO_COLUMN_NAME).asInstanceOf[UUID]))))(context.executor)
+      unlinkRelations.map(_.map(unlinkRelations => {
+        val linkObjects = mutationObjects.map(_.updated(keywords.response.RELATION, keywords.response.RELATION_LINK))
+        val unlinkObjects = unlinkRelations.map(unlinkObject)
+        (linkObjects ++ unlinkObjects, mutationStatements)
+      }))(context.executor)
+    }))(context.executor)
+    util.flattenFOFO(result, context.executor)
+  }
   def relationMutation(context: Context, transactionId: UUID, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: RelationMutation): MutationResult = {
     payload match {
-      case link: LinkMutation => linkMutation(context, entityName, link.mutation)
-      case unlink: UnlinkMutation => unlinkMutation(context, entityName, MatchMutation(unlink.`match`))
-      case replace: ReplaceMutation => replaceMutation(context, parentEntityName, parentId, parentRelation, entityName, replace.mutation)
+      case link: LinkMutation => linkMutation(context, transactionId, entityName, link.mutation)
+      case unlink: UnlinkMutation => unlinkMutation(context, transactionId, parentEntityName, parentId, parentRelation, entityName, unlink.`match`)
+      case replace: ReplaceMutation => replaceMutation(context, transactionId, parentEntityName, parentId, parentRelation, entityName, replace.mutation)
     }
   }
 
