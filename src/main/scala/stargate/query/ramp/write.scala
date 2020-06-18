@@ -20,15 +20,25 @@ object write {
   type RampRows = List[(CassandraTable, Map[String,Object])]
   case class WriteResult(success: Boolean, writes: RampRows, cleanup: RampRows)
 
-
-
+  
 
   def createEntity(tables: List[CassandraTable], payload: Map[String,Object]): (UUID, List[InsertOp]) = {
     val uuid = UUID.randomUUID()
     val idPayload = payload.updated(schema.ENTITY_ID_COLUMN_NAME, uuid)
     (uuid, tables.map(t => InsertOp(t, idPayload)))
   }
-
+  def updateEntity(tables: List[CassandraTable], currentEntity: Map[String,Object], changes: Map[String,Object]): List[WriteOp] = {
+    tables.flatMap(table => {
+      val keyChanged = table.columns.key.combined.exists(col => changes.get(col.name).orNull != null)
+      if(keyChanged) {
+        val delete = CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, true), currentEntity)
+        val insert = InsertOp(table, currentEntity++changes)
+        List(delete, insert)
+      } else {
+        List(CompareAndSetOp(table, currentEntity ++ changes, currentEntity))
+      }
+    })
+  }
 
 
   def compareAndSet(table: CassandraTable, write: Map[String,Object], previous: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
