@@ -1,5 +1,3 @@
-#!/bin/bash
-
 #   Copyright DataStax, Inc.
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -11,5 +9,24 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-mvn clean package -DskipTests=true
-docker build "." -f "./kube/Dockerfile" -t "stargate:latest"
+
+#
+## Build stage
+#
+FROM maven:3.6-jdk-11 AS build
+COPY src /home/app/src
+COPY pom.xml /home/app
+RUN mvn -f /home/app/pom.xml clean package -DskipTests
+
+#
+## Package stage
+#
+FROM openjdk:11-jre-slim
+
+COPY --from=build /home/app/target ./stargate
+COPY --from=build /home/app/src/main/webapp ./stargate/src/main/webapp
+
+WORKDIR ./stargate
+RUN cp ./classes/logback-prod.xml ./classes/logback.xml
+
+CMD ["sh", "-c", "java -jar ./stargate.jar"]

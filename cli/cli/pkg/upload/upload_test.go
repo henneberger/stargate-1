@@ -41,7 +41,7 @@ func (suite *UploadSuite) SetupSuite() {
 	if err != nil {
 		log.Fatalf("unable to connect to docker %s", err)
 	}
-	dockerConfig, err := config.NewSGDockerConfig("v0.1.1", "3.11.6")
+	dockerConfig, err := config.NewSGDockerConfig("v0.2.0", "3.11.6")
 	if err != nil {
 		log.Fatalf("unable to wire up configuration with '%s'", err)
 	}
@@ -82,7 +82,7 @@ func (suite *UploadSuite) TearDownSuite() {
 }
 
 const validHost = "http://localhost:8080/v1/api/test/schema"
-const validPath = "../../../src/main/resources/schema.conf"
+const validPath = "../../../../src/main/resources/schema.conf"
 
 func (suite *UploadSuite) TestInvalidPathInput() {
 	err := Upload("", validHost)

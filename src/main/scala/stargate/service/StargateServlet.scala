@@ -53,6 +53,11 @@ class StargateServlet(
     .every(java.time.Duration.ofSeconds(10))
     .build()
 
+  /**
+   *
+   * route the logic that matches URLs to actions. This is effectively the entry point
+   * of the serlvet.
+   */
   def route(req: HttpServletRequest, resp: HttpServletResponse): Unit = {
     try {
       val contentLength = req.getContentLengthLong
@@ -85,26 +90,27 @@ class StargateServlet(
           val model = stargate.model.parser.parseModel(input)
           resp.getWriter.write(util.toJson(model))
         case s"/${namespace}/apigen/${entityName}/${op}" =>
-          logger.trace("matched /:namespace/apigen/:entityName")
+          logger.trace("matched /:namespace/apigen/:entityName/:op")
           generateQuery(namespace, entityName, op, resp)
-        case s"/${namespace}/query/stored/${queryName}" =>
-          logger.trace("matched /:namespace/query/stored/:queryName")
-          //http.validateJsonContentHeader(req)
-          val isSwagger = contentLength < 1L
+        case s"/${namespace}/query/${queryName}" =>
+          logger.trace("matched /:namespace/query/:queryName")
+          //some http clients like Swagger and Javascript's 'fetch' do not allow the use of a body with GET
+          //for those cases we've provided an alternate approach via query string by using the 'payload' parameter..
+          val hasBody = contentLength > 0L
           var payload: String = ""
-          if (isSwagger) {
+          if (!hasBody) {
             payload = req.getParameter("payload")
           } else {
             payload = new String(req.getInputStream.readAllBytes)
           }
           logger.trace(s"stored query payload is $payload")
           runPredefinedQuery(namespace, queryName, payload, resp)
-        case s"/${namespace}/query/continue/${id}" => {
-          logger.trace("matched /:namespace/query/continue/:id")
+        case s"/${namespace}/continueQuery/${id}" => {
+          logger.trace("matched /:namespace/continueQuery/:id")
           continueQuery(namespace, UUID.fromString(id), resp)
         }
-        case s"/${namespace}/query/entity/${entity}/${id}" => {
-          logger.trace("matched /:namespace/query/:entity/:id")
+        case s"/${namespace}/entity/${entity}/${id}" => {
+          logger.trace("matched /:namespace/entity/:entity/:id")
           require(op != "POST", "cannot create entity with id specified in path")
           http.validateMutation(op, contentLength, maxMutationSize)
           val payload = new String(req.getInputStream.readAllBytes)
@@ -119,7 +125,7 @@ class StargateServlet(
           logger.trace(s"entity converts to $payloadObj")
           runQuery(namespace, entity, op, payloadObj , resp)
         }
-        case s"/${namespace}/query/entity/${entity}" => {
+        case s"/${namespace}/entity/${entity}" => {
           logger.trace("matched /:namespace/query/:entity/")
           http.validateMutation(op, contentLength, maxMutationSize)
           val isSwagger = contentLength < 1L
@@ -150,36 +156,62 @@ class StargateServlet(
     }
   }
 
-  def lookupModel(appName: String): OutputModel = {
-    val model = this.apps.get(appName)
-    require(model != null, s"invalid database name: $appName")
+  /**
+   *
+   * lookupModel retrieves the outputModel from a specified namespace
+   *
+   * @param namespace needs to reference an already created namespace via postSchema or stored in the database.:w
+   */
+  def lookupModel(namespace: String): OutputModel = {
+    val model = this.apps.get(namespace)
+    require(model != null, s"invalid database name: $namespace")
     model
   }
 
-  def postSchema(appName: String, input: String, response: HttpServletResponse): Unit = {
-    val model = stargate.schema.outputModel(stargate.model.parser.parseModel(input), appName)
+  /**
+    * postSchema takes a hocon file that includes a valid stargate type definition and turns it into a 
+    * namespace object. Tables are created for all types in a keyspace with the same name as the namespace.
+    * The newly created namespace will be returned in the json response.
+    *
+    * @param namespace namespace to be created, cannot have the same name as any existing keyspace in Apache Cassandra.
+    * @param input the schema payload in the Stargate hocon format.
+    * @param response HttpServletResponse object to set content to application/json and write back the newly created namespace object.
+    */
+  def postSchema(namespace: String, input: String, response: HttpServletResponse): Unit = {
+    val model = stargate.schema.outputModel(stargate.model.parser.parseModel(input), namespace)
+    //retrieving previousDatamodel to see if we can reuse it
     val previousDatamodel =
-      util.await(datamodelRepository.fetchLatestDatamodel(appName, datamodelRepoTable, cqlSession, executor)).get
+      util.await(datamodelRepository.fetchLatestDatamodel(namespace, datamodelRepoTable, cqlSession, executor)).get
     if (!previousDatamodel.contains(input)) {
-      logger.info(s"""creating keyspace "$appName" for new datamodel""")
-      datamodelRepository.updateDatamodel(appName, input, datamodelRepoTable, cqlSession, executor)
-      cassandra.recreateKeyspace(cqlSession, appName, sgConfig.cassandra.cassandraReplication)
+      logger.info(s"""creating keyspace "$namespace" for new datamodel""")
+      datamodelRepository.updateDatamodel(namespace, input, datamodelRepoTable, cqlSession, executor)
+      cassandra.recreateKeyspace(cqlSession, namespace, sgConfig.cassandra.cassandraReplication)
       Await.result(model.createTables(cqlSession, executor), Duration.Inf)
     } else {
-      logger.info(s"""reusing existing keyspace "$appName" with latest datamodel""")
+      logger.info(s"""reusing existing keyspace "$namespace" with latest datamodel""")
     }
-    val namespace = apps.put(appName, model)
+    //store the namespace and retrieve the newly created object then return it back to the user for validation.:w
+    val namespaceObj = apps.put(namespace, model)
     response.setContentType("application/json")
-    response.getWriter.write(util.toJson(namespace))
+    response.getWriter.write(util.toJson(namespaceObj))
   }
 
-  def deleteSchema(appName: String, resp: HttpServletResponse): Unit = {
-    logger.info(s"""deleting datamodels and keyspace for app "$appName" """)
-    val removed = this.apps.remove(appName)
-    util.await(datamodelRepository.deleteDatamodel(appName, datamodelRepoTable, cqlSession, executor)).get
-    cassandra.wipeKeyspace(cqlSession, appName)
+  /**
+    * removes the namespace and all associated data, this is a descrutive operation and 
+    * will require restoring data from backup if this was a mistake.
+    *
+    * @param namespace namespace to remove, it must already exist
+    * @param resp returns a 404 if the namespace does not exist
+    */
+  def deleteSchema(namespace: String, resp: HttpServletResponse): Unit = {
+    logger.info(s"""deleting datamodels and keyspace for app "$namespace" """)
+    val removed = this.apps.remove(namespace)
     if (removed == null) {
       resp.setStatus(404)
+    } else {
+      util.await(datamodelRepository.deleteDatamodel(namespace, datamodelRepoTable, cqlSession, executor)).get
+      //wipe and destroy all cassandra data related to this namesapce
+      cassandra.wipeKeyspace(cqlSession, namespace)
     }
   }
 
@@ -243,10 +275,19 @@ class StargateServlet(
     })(executor)
   }
 
-  def continueQuery(appName: String, continueId: UUID, resp: HttpServletResponse): Unit = {
-    val model = lookupModel(appName)
+  /**
+   * 
+   * continueQuery connects to the continuationCache depending on the continueId supplied.
+   * if there is no continue query found the query will fail.
+   *
+   * @param namespace where the data model for the continue is located
+   * @param continueId the id to find the specific entry in the continuationCache
+   * @param resp HttpServletResponse to write out the result too
+   */
+  def continueQuery(namespace: String, continueId: UUID, resp: HttpServletResponse): Unit = {
+    val model = lookupModel(namespace)
     val continue_cleanup = continuationCache.remove(continueId)
-    require(continue_cleanup != null, s"""no continuable query found for id $continueId in database "$appName" """)
+    require(continue_cleanup != null, s"""no continuable query found for id $continueId in database "$namespace" """)
     val (entry, cleanup) = continue_cleanup
     cleanup.cancel(false)
 
@@ -291,18 +332,30 @@ class StargateServlet(
     resp.getWriter.write(util.toJson(Await.result(result, Duration.Inf)))
   }
 
+  /**
+   * just passes to the route method
+   */
   override def doPut(req: HttpServletRequest, resp: HttpServletResponse): Unit = {
     route(req, resp)
   }
 
+  /**
+   * just passes to the route method
+   */
   override def doDelete(req: HttpServletRequest, resp: HttpServletResponse): Unit = {
     route(req, resp)
   }
 
+  /**
+   * just passes to the route method
+   */
   override def doGet(req: HttpServletRequest, resp: HttpServletResponse): Unit = {
     route(req, resp)
   }
 
+  /**
+   * just passes to the route method
+   */
   override def doPost(req: HttpServletRequest, resp: HttpServletResponse): Unit = {
     route(req, resp)
   }

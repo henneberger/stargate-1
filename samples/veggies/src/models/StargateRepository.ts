@@ -1,3 +1,19 @@
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import {
 	Category,
 	Product,
@@ -75,7 +91,7 @@ export class StargateRepository {
 	constructor(server: string, ns: string) {
 		this.server = server;
 		this.ns = ns;
-		this.entitiesUrl = this.wrapUrl("/query/entity/");
+		this.entitiesUrl = this.wrapUrl("/entity/");
 		this.categoriesUrl = this.entitiesUrl + "Category";
 		this.productsUrl = this.entitiesUrl + "Product";
 		this.lineItemUrl = this.entitiesUrl + "LineItem";
@@ -97,7 +113,7 @@ export class StargateRepository {
 
 	async initializeState(): Promise<AppState> {
 		let customer: Customer;
-		const customerUrl = `${this.entitiesUrl}/Customer"`;
+		const customerUrl = `${this.entitiesUrl}/Customer`;
 		const response = await fetch(
 			//because of the lack of support for GET with a body via fetch, we have to pass this json to a query parameter named payload.
 			//searching here by email of the Customer object and inclding the addresses for that customer in the response
@@ -393,7 +409,7 @@ export class StargateRepository {
 			if (continueId) {
 				//if the continueId is present regardless of if there is a categoryFilter or not we can rely on the continueId to have our previous query parameters.
 				fetchUrl = this.wrapUrl(
-					"/query/continue/" + continueId
+					"/continueQuery/" + continueId
 				);
 			}
 
@@ -557,7 +573,7 @@ export class StargateRepository {
 			if (continueId) {
 				//continue the query by the token provided by previous queries
 				queryUrl = this.wrapUrl(
-					`/query/continue/${continueId}`
+					`/continueQuery/${continueId}`
 				);
 			}
 			fetch(queryUrl, {
@@ -567,16 +583,28 @@ export class StargateRepository {
 				.then(x => x.json())
 				.then(x => x as QueryResponse<Product>)
 				.then(x => {
-					x.data.forEach(x => products.push(x));
-					//when there is a continueId present go ahead and page
-					//otherwise just run the resultAction
-					if (x.continue.continueId) {
-						getPage(
-							x.continue.continueId,
-							products
+					if (x && x.data) {
+						x.data.forEach(x =>
+							products.push(x)
 						);
+						//when there is a continueId present go ahead and page
+						//otherwise just run the resultAction
+						if (x.continue.continueId) {
+							getPage(
+								x.continue
+									.continueId,
+								products
+							);
+						} else {
+							resultAction(products);
+						}
 					} else {
-						resultAction(products);
+						console.log(
+							`invalid reponse from server looking for products: ${x}`
+						);
+						resultAction(
+							new Array<Product>()
+						);
 					}
 				});
 		};

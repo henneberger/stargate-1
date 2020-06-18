@@ -38,18 +38,10 @@ jobs:
       run: mvn verify 
     - name: stop cassandra
       run: docker kill test-cassandra && docker rm test-cassandra
-    - name: install plugin 
-      run: mvn org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate -Dexpression=project.version
-    - name: set version
-      run: echo "::set-env name=SG_VERSION::$(mvn org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate -Dexpression=project.version |grep -Ev '(^\[|Download\w+:)')"
-    - name: debug version
-      run: echo ${{ env.SG_VERSION }}
     - name: build and push docker
       uses: docker/build-push-action@v1
       with:
         username: ${{ secrets.STARGATE_DOCKER_USER }}
         password: ${{ secrets.STARGATE_DOCKER_PASSWORD }}
         repository: datastax/stargate
-        dockerfile: kube/Dockerfile
-        build_args: SG_VERSION=${{ env.SG_VERSION }}
         tag_with_ref: true

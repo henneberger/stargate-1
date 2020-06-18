@@ -19,20 +19,45 @@ package stargate.service
 import java.util.regex.Pattern
 import javax.servlet.http.HttpServletRequest
 
+/**
+ * provides helper methods for the http service
+ */
 package object http {
 
+  /**
+   *
+   * validates the total request size is not above a certain amount in bytes.
+   *
+   * @param contentLength is the length in bytes of the http request.
+   * @param maxRequestSize is the max length in bytes allowed by the http request.
+   */
   def validateRequestSize(contentLength: Long, maxRequestSize: Long): Unit = {
     if (contentLength > maxRequestSize){
       throw MaximumRequestSizeException(contentLength, maxRequestSize)
     }
   }
 
+  /**
+   * validates the schema file submitted is not bigger than a specified size
+   *
+   * @param contentLength content length of the http request in bytes
+   * @param maxSchemaSize max size of the http request when a schema file is submitted
+   */
   def validateSchemaSize(contentLength: Long, maxSchemaSize: Long): Unit= {
     if (contentLength > maxSchemaSize){
       throw SchemaToLargeException(contentLength, maxSchemaSize)
     }
   }
 
+  /**
+   *
+   * validates the operation is PUT or POST and there that the content length does not exceed
+   * the max mutation size.
+   * 
+   * @param op http method used 
+   * @param contentLength how long the http request is
+   * @param maxMutationSize the limit in bytes of the mutation request send via http
+   */
   def validateMutation(op: String, contentLength: Long, maxMutationSize: Long): Unit ={
     if ((op == "PUT" || op == "POST") && contentLength > maxMutationSize){
       throw MaxMutationSizeException(contentLength, maxMutationSize)
@@ -112,6 +137,10 @@ package object http {
     pathRegex.matcher(path).replaceAll("/")
   }
 
+  /** 
+   *  InvalidContentTypeException is designed to be used when the wrong content type is sent in an
+   *  http request
+   */
   case class InvalidContentTypeException(expectedContentType: String, contentType: String)
   extends Exception(s"Expected $expectedContentType but was $contentType"){}
 }

@@ -30,12 +30,12 @@ import stargate.service.testsupport._
 
 trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
 
-  val url = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}")
+  val url = wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}")
 
   @After
   def tearDown(): Unit = {
     val r = httpDelete(
-      wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}"),
+      wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}"),
       "application/json",
       "{\"-match\": \"all\"}")
     if(r.statusCode != 200){
@@ -64,7 +64,7 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
 
   @Test
   def testEntityCreate(): Unit = {
-    val r = httpPost(wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}"), "application/json",
+    val r = httpPost(wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}"), "application/json",
       """
           |{
           |        "firstName": "Steve",
@@ -88,14 +88,14 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
       throw new RuntimeException(s"can't setup new record to query ${r.statusCode}")
     }
 
-    r = httpDelete(wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}"),
+    r = httpDelete(wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}"),
       "application/json",
       "{\"-match\": [\"firstName\", \"=\", \"Steve\"]}")
     assertEquals("not able to delete record", 200, r.statusCode)
     assertTrue(r.contentType.isDefined)
     assertEquals(r.contentType.get, "application/json")
 
-    val newUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}")
+    val newUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}")
     val getQuery = ("""
                       |{
                       | "-match":["firstName","=", "Steve"]
@@ -114,7 +114,7 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
   @Test
   def testEntityUpdate(): Unit = {
     val r = httpPut( 
-      wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}"),
+      wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}"),
       "application/json",
       """
           |{
@@ -138,7 +138,7 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
           |     "orders":{}
           |}
           |""".stripMargin)
-    val url = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}")
+    val url = wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}")
     val response = httpGet(url, "application/json", getQuery)
     assertEquals(200, response.statusCode)
     assertTrue(response.contentType.isDefined)
@@ -156,7 +156,7 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
   @Test
   def testEntityQuery(): Unit = {
     val getQuery = """{"-match":["firstName","=", "Steve"]}"""
-    val url = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}")
+    val url = wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}")
     val r = httpGet(url, "application/json", getQuery)
     assertEquals(200, r.statusCode)
     assertTrue(r.contentType.isDefined)
@@ -184,11 +184,11 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
       throw new RuntimeException(s"can't setup new record to query ${r.statusCode}")
     }
     val getQuery = """{"-match":["firstName","=", "Steve"],"-limit":1,"-continue":true}"""
-    val queryUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}")
+    val queryUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}")
     val response = httpGet(queryUrl, "application/json", getQuery)
     val resultBody = ConfigFactory.parseString(response.body.get)
     val queryId: String = resultBody.getString("continue.continueId")
-    r = httpGet(wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/continue/${queryId}"), "application/json", "")
+    r = httpGet(wrap(s"${StargateApiVersion}/api/${sc.namespace}/continueQuery/${queryId}"), "application/json", "")
     assertEquals(200, r.statusCode)
     assertTrue("content type is not defined", r.contentType.isDefined)
     assertEquals("application/json", r.contentType.get)
@@ -205,7 +205,7 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
                      |}
                      |""".stripMargin
     val myQuery = "customerByFirstName"
-    val queryUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/stored/${myQuery}")
+    val queryUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/${myQuery}")
     val response = httpGet(queryUrl, "application/json", getQuery)
     logger.info(s"continue requested query response is ${response.body.get}")
     assertEquals(response.statusCode, 200)
@@ -219,7 +219,7 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
   @Test
   def testEntityById(): Unit = {
     print("testing by entity id")
-    val queryUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}")
+    val queryUrl = wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}")
     val getQuery = """{"-match":"all"}"""
     val response = httpGet(queryUrl, "application/json", getQuery)
     val all = ConfigFactory.parseString(response.body.get).getConfigList("data")
@@ -227,16 +227,16 @@ trait QueryServletTest extends HttpClientTestTrait with LazyLogging {
     val uuid = UUID.fromString(all.get(0).getString("entityId"))
 
     def get(): java.util.List[_ <: Config] = {
-       val body = httpGet(wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}/${uuid}"), "application/json", "").body.get
+       val body = httpGet(wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}/${uuid}"), "application/json", "").body.get
        logger.info(s"body from testEntityById $body")
        ConfigFactory.parseString(body).getConfigList("data")
     }
     assertTrue("record did not match on get by id", get().get(0) == all.get(0))
-    val update = httpPut(wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}/${uuid}"),
+    val update = httpPut(wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}/${uuid}"),
                 "application/json",
                 """{"firstName":"asdf"}""".stripMargin)
     assert(get().get(0) != all.get(0))
-    val delete = httpDelete(wrap(s"${StargateApiVersion}/api/${sc.namespace}/query/entity/${sc.entity}/${uuid}"),
+    val delete = httpDelete(wrap(s"${StargateApiVersion}/api/${sc.namespace}/entity/${sc.entity}/${uuid}"),
       "application/json", "")
     assertTrue("record was not deleted", get().isEmpty)
   }

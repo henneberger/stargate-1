@@ -39,7 +39,7 @@ trait StargateServletTest extends HttpClientTestTrait with KeyspaceRegistry {
     assertEquals("application/json", r.contentType.get)
 
     val getQuery = """{"-match":["firstName","=", "Steve"]}"""
-    val url = wrap(s"${StargateApiVersion}/api/${newNamespace}/query/entity/${sc.entity}")
+    val url = wrap(s"${StargateApiVersion}/api/${newNamespace}/entity/${sc.entity}")
     r = httpGet(url, "application/json", getQuery)
     //validate I can hit the end point even if there are no results
     assertEquals(200, r.statusCode)
@@ -55,7 +55,7 @@ trait StargateServletTest extends HttpClientTestTrait with KeyspaceRegistry {
 
     //validate there is no endpoint to hit
     val getQuery = """{"-match":["firstName","=", "Steve"]}"""
-    val url = wrap(s"${StargateApiVersion}/api/${newNamespace}/query/entity/${sc.entity}")
+    val url = wrap(s"${StargateApiVersion}/api/${newNamespace}/entity/${sc.entity}")
     r = httpGet(url, "application/json", getQuery)
     //should get bad gateway with missing namespace
     assertEquals("unexpected successed, endpoint was deleted and this should fail", 502, r.statusCode )
