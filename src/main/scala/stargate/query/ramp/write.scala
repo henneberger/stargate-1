@@ -43,7 +43,6 @@ object write {
     tables.map(table => CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, true), currentEntity))
   }
 
-
   def compareAndSet(table: CassandraTable, write: Map[String,Object], previous: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
     implicit val ec: ExecutionContext = executor
     for {
@@ -55,6 +54,17 @@ object write {
       deleteCleanup = if(write.get(TRANSACTION_DELETED_COLUMN_NAME).contains(java.lang.Boolean.TRUE:Object)) List((table, write)) else List.empty
       cleanup = List((table, previous)) ++ deleteCleanup
     } yield WriteResult(success, writes, cleanup)
+  }
+
+  def insert(table: CassandraTable, write: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
+    cassandra.executeAsync(session, query.write.insertStatement(table, write).build, executor).map(_ => WriteResult(true, List((table, write)), List.empty))(executor)
+  }
+
+  def execute(context: Context, op: WriteOp): Future[WriteResult] = {
+    op match {
+      case InsertOp(table, data) => insert(table, data, context.session, context.executor)
+      case CompareAndSetOp(table, data, previous) => compareAndSet(table, data, previous, context.session, context.executor)
+    }
   }
 
 
