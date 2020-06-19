@@ -326,19 +326,11 @@ package object ramp {
   def get(context: Context, entityName: String, payload: GetQuery): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
       val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
-      val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
-      val getResult = inProgress.flatMap(_ => get(context, transactionId, entityName, payload))(context.executor)
-      getResult.flatMap(result => {
-        if(result.isDefined) {
-          context.setState(transactionId, TransactionState.SUCCESS).map(_ => result)(context.executor)
-        } else {
-          context.setState(transactionId, TransactionState.FAILED).map(_ => result)(context.executor)
-        }
-      })(context.executor)
+      get(context, transactionId, entityName, payload)
     }
     tryMutation.flatMap(result => result.map(rows => {
       Future.successful(Some(rows))
-    }).getOrElse(tryMutation))(context.executor)
+    }).getOrElse(get(context, entityName, payload)))(context.executor)
   }
   def mutation(context: Context, entityName: String, payload: Mutation): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
@@ -354,7 +346,7 @@ package object ramp {
         }
       })(context.executor)
     }
-    tryMutation.flatMap(result => result.map(rows => Future.successful(Some(rows))).getOrElse(tryMutation))(context.executor)
+    tryMutation.flatMap(result => result.map(rows => Future.successful(Some(rows))).getOrElse(mutation(context, entityName, payload)))(context.executor)
   }
   def delete(context: Context, entityName: String, payload: DeleteQuery): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
@@ -370,7 +362,7 @@ package object ramp {
         }
       })(context.executor)
     }
-    tryMutation.flatMap(result => result.map(rows => Future.successful(Some(rows))).getOrElse(tryMutation))(context.executor)
+    tryMutation.flatMap(result => result.map(rows => Future.successful(Some(rows))).getOrElse(delete(context, entityName, payload)))(context.executor)
   }
 
 
