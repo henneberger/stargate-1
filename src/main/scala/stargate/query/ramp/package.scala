@@ -5,8 +5,8 @@ import java.util.UUID
 import com.datastax.oss.driver.api.core.CqlSession
 import stargate.model.queries._
 import stargate.model.{OutputModel, ScalarCondition}
-import stargate.query.ramp.read.MaybeReadRows
-import stargate.query.ramp.write.WriteOp
+import stargate.query.ramp.read.{MaybeRead, MaybeReadRows}
+import stargate.query.ramp.write.{CompareAndSetOp, WriteOp}
 import stargate.schema.GroupedConditions
 import stargate.util.AsyncList
 import stargate.{keywords, query, schema, util}
@@ -46,13 +46,13 @@ package object ramp {
     addResponseMetadata(result, Map((key, value)), executor)
   }
 
-  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: List[ScalarCondition[Object]]): ramp.read.MaybeReadRows = {
+  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: List[ScalarCondition[Object]]): MaybeReadRows = {
     val executor = context.executor
     val potentialIds = query.matchEntities(context.queryContext, entityName, conditions).dedupe(executor)
     val potentialEntities = potentialIds.map(id => ramp.read.entityIdToLastValidState(context, transactionId, entityName, id), executor)
     ramp.read.flatten(potentialEntities, executor).map(_.map(_.filter(query.read.checkConditions(_, conditions))))(executor)
   }
-  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: GroupedConditions[Object]): ramp.read.MaybeRead[UUID] = {
+  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: GroupedConditions[Object]): MaybeRead[UUID] = {
     val groupedEntities = conditions.toList.map(path_conds => {
       val (path, conditions) = path_conds
       val targetEntityName = schema.traverseEntityPath(context.model.input.entities, entityName, path)
@@ -64,7 +64,7 @@ package object ramp {
 
 
 
-  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: ramp.read.MaybeRead[UUID]): ramp.read.MaybeRead[UUID] = {
+  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: MaybeRead[UUID]): MaybeRead[UUID] = {
     if(relationPath.isEmpty) {
       ids
     } else {
@@ -73,10 +73,10 @@ package object ramp {
       resolveRelations(context, transactionId, context.model.input.entities(entityName).relations(relationName).targetEntityName, relationPath.tail, next)
     }
   }
-  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): ramp.read.MaybeRead[UUID] = {
+  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): MaybeRead[UUID] = {
     resolveRelations(context, transactionId, entityName, relationPath, Future.successful(Some(ids)))
   }
-  def resolveReverseRelations(context: Context, transactionId: UUID, rootEntityName: String, relationPath: List[String], relatedIds: ramp.read.MaybeRead[UUID]): ramp.read.MaybeRead[UUID] = {
+  def resolveReverseRelations(context: Context, transactionId: UUID, rootEntityName: String, relationPath: List[String], relatedIds: MaybeRead[UUID]): MaybeRead[UUID] = {
     if(relationPath.isEmpty) {
       relatedIds
     } else {
@@ -86,12 +86,12 @@ package object ramp {
       resolveRelations(context, transactionId, newRootEntityName, inversePath, relatedIds)
     }
   }
-  def resolveReverseRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): ramp.read.MaybeRead[UUID] = {
+  def resolveReverseRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): MaybeRead[UUID] = {
     resolveReverseRelations(context, transactionId, entityName, relationPath, Future.successful(Some(ids)))
   }
 
 
-  def getEntitiesAndRelated(context: Context, transactionId: UUID, entityName: String, ids: ramp.read.MaybeRead[UUID], payload: GetSelection): ramp.read.MaybeReadRows = {
+  def getEntitiesAndRelated(context: Context, transactionId: UUID, entityName: String, ids: MaybeRead[UUID], payload: GetSelection): MaybeReadRows = {
     val executor = context.executor
     val relations = context.model.input.entities(entityName).relations
     val results = ids.map(_.map(_.map(id => {
@@ -110,7 +110,7 @@ package object ramp {
     })))(executor)
     util.flattenFOLFOL(results, executor)
   }
-  def get(context: Context, transactionId: UUID, entityName: String, payload: GetQuery): ramp.read.MaybeReadRows = {
+  def get(context: Context, transactionId: UUID, entityName: String, payload: GetQuery): MaybeReadRows = {
     val ids = matchEntities(context, transactionId, entityName, payload.`match`)
     getEntitiesAndRelated(context, transactionId, entityName, ids, payload.selection)
   }
@@ -170,7 +170,7 @@ package object ramp {
     ids.map(_.map(ids => (ids.map(id => query.write.entityIdPayload(id).updated(keywords.response.ACTION, keywords.response.ACTION_UPDATE)), List.empty)))(context.executor)
   }
 
-  def update(context: Context, transactionId: UUID, entityName: String, ids: ramp.read.MaybeRead[UUID], payload: UpdateMutation): MutationResult = {
+  def update(context: Context, transactionId: UUID, entityName: String, ids: MaybeRead[UUID], payload: UpdateMutation): MutationResult = {
     val executor = context.executor
     val updateAll = ids.map(_.map(_.map( id => {
       val state = ramp.read.entityIdToLastValidState(context, transactionId, entityName, id)
@@ -192,6 +192,43 @@ package object ramp {
     val result = update(context, transactionId, entityName, ids, payload)
     addResponseMetadata(result, keywords.response.ACTION, keywords.response.ACTION_UPDATE, context.executor)
   }
+
+  def delete(context: Context, transactionId: UUID, entityName: String, ids: MaybeRead[UUID], payload: DeleteSelection): MutationResult = {
+    implicit val executor: ExecutionContext = context.executor
+    val relations = context.model.input.entities(entityName).relations
+    val result = ids.map(_.map(ids => ids.map(id => {
+      val state = ramp.read.entityIdToLastValidState(context, transactionId, entityName, id)
+      val deleteResult = state.map(_.map(_.map(currentEntity => {
+        val deleteCurrent = ramp.write.deleteEntity(context.model.entityTables(entityName), currentEntity)
+        val childResults = relations.toList.map(name_relation => {
+          val (relationName, relation) = name_relation
+          val childRows = ramp.read.resolveRelation(context, transactionId, entityName, List(id), relationName)
+          // TODO recursive deletes wont work due to double-deleting bidi relations
+          val unlinks = childRows.map(_.map(rows => rows.flatMap(row => ramp.write.deleteBidirectionalRelation(context.model, transactionId, entityName, relationName, row))))
+          val recurse = if(payload.relations.contains(relationName)) {
+            val childIds = childRows.map(_.map(_.map(_(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])))
+            delete(context, transactionId, relation.targetEntityName, childIds, payload.relations(relationName))
+          } else {
+            Future.successful(Some(List.empty, List.empty))
+          }
+          unlinks.map(_.map(unlinks => recurse.map(_.map(recurse => (relationName, recurse._1, unlinks ++ recurse._2)))))
+        })
+        util.flattenFOLFO(util.sequence(childResults, executor).map(util.sequence), executor).map(_.map(relationsOps => {
+          val entity = Map((schema.ENTITY_ID_COLUMN_NAME, currentEntity(schema.ENTITY_ID_COLUMN_NAME))) ++ relationsOps.map(r => (r._1, r._2)).toMap
+          (entity, deleteCurrent ++ relationsOps.flatMap(_._3))
+        }))
+      })))
+      util.flattenFOLFO(deleteResult, executor)
+    })))
+    util.flattenFOLFO(result, executor).map(_.map(lists => (lists.flatMap(_.map(_._1)), lists.flatMap(_.flatMap(_._2)))))
+  }
+
+  def delete(context: Context, transactionId: UUID, entityName: String, payload: DeleteQuery): MutationResult = {
+    val ids = matchEntities(context, transactionId, entityName, payload.`match`)
+    val result = delete(context, transactionId, entityName, ids, payload.selection)
+    addResponseMetadata(result, keywords.response.ACTION, keywords.response.ACTION_DELETE, context.executor)
+  }
+
 
 
   def mutation(context: Context, transactionId: UUID, entityName: String, payload: Mutation): MutationResult = {

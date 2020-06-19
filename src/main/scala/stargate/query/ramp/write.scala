@@ -39,6 +39,9 @@ object write {
       }
     })
   }
+  def deleteEntity(tables: List[CassandraTable], currentEntity: Map[String,Object]): List[WriteOp] = {
+    tables.map(table => CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, true), currentEntity))
+  }
 
 
   def compareAndSet(table: CassandraTable, write: Map[String,Object], previous: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
