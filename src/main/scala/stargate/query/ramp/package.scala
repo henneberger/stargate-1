@@ -1,19 +1,18 @@
 package stargate.query
 
 import java.util.UUID
-import java.util.concurrent.{Executors, TimeUnit}
+import java.util.concurrent.{ConcurrentHashMap, Executors, TimeUnit}
 
 import com.datastax.oss.driver.api.core.CqlSession
-import stargate.cassandra.CassandraTable
 import stargate.model.queries._
 import stargate.model.{OutputModel, ScalarCondition}
 import stargate.query.ramp.read.{MaybeRead, MaybeReadRows}
-import stargate.query.ramp.write.{CompareAndSetOp, WriteOp}
+import stargate.query.ramp.write.WriteOp
 import stargate.schema.GroupedConditions
-import stargate.util.AsyncList
 import stargate.{cassandra, keywords, query, schema, util}
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Random
 
 package object ramp {
 
@@ -36,7 +35,16 @@ package object ramp {
   case class Context(model: OutputModel, getState: GetTransactionState, setState: SetTransactionState, session: CqlSession,executor: ExecutionContext) {
     val queryContext = query.Context(model, session, executor)
   }
+  def createContext(model: OutputModel, session: CqlSession, executor: ExecutionContext): Context = {
+    val stateMap = new ConcurrentHashMap[UUID, TransactionState.Value]()
+    def getState(id: UUID) = Future.successful(stateMap.get(id))
+    def setState(id: UUID, state: TransactionState.Value) = Future.successful({ stateMap.put(id, state); () })
+    Context(model, getState, setState, session, executor)
+  }
+
   type MutationResult = Future[Option[(List[Map[String,Object]], List[ramp.write.WriteOp])]]
+
+
 
 
   def addResponseMetadata(result: MutationResult, metadata: Map[String,Object], executor: ExecutionContext): MutationResult = {
@@ -313,5 +321,58 @@ package object ramp {
     }))(executor)
     util.flattenFOFO(result, executor)
   }
+
+
+  def get(context: Context, entityName: String, payload: GetQuery): MaybeReadRows = {
+    def tryMutation: MaybeReadRows = {
+      val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
+      val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
+      val getResult = inProgress.flatMap(_ => get(context, transactionId, entityName, payload))(context.executor)
+      getResult.flatMap(result => {
+        if(result.isDefined) {
+          context.setState(transactionId, TransactionState.SUCCESS).map(_ => result)(context.executor)
+        } else {
+          context.setState(transactionId, TransactionState.FAILED).map(_ => result)(context.executor)
+        }
+      })(context.executor)
+    }
+    tryMutation.flatMap(result => result.map(rows => {
+      Future.successful(Some(rows))
+    }).getOrElse(tryMutation))(context.executor)
+  }
+  def mutation(context: Context, entityName: String, payload: Mutation): MaybeReadRows = {
+    def tryMutation: MaybeReadRows = {
+      val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
+      val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
+      val dataWrites = inProgress.flatMap(_ => mutation(context, transactionId, entityName, payload))(context.executor)
+      val writeResult = executeMutation(context, dataWrites)
+      writeResult.flatMap(result => {
+        if (result.isDefined) {
+          context.setState(transactionId, TransactionState.SUCCESS).map(_ => result)(context.executor)
+        } else {
+          context.setState(transactionId, TransactionState.FAILED).map(_ => result)(context.executor)
+        }
+      })(context.executor)
+    }
+    tryMutation.flatMap(result => result.map(rows => Future.successful(Some(rows))).getOrElse(tryMutation))(context.executor)
+  }
+  def delete(context: Context, entityName: String, payload: DeleteQuery): MaybeReadRows = {
+    def tryMutation: MaybeReadRows = {
+      val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
+      val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
+      val dataWrites = inProgress.flatMap(_ => delete(context, transactionId, entityName, payload))(context.executor)
+      val writeResult = executeMutation(context, dataWrites)
+      writeResult.flatMap(result => {
+        if (result.isDefined) {
+          context.setState(transactionId, TransactionState.SUCCESS).map(_ => result)(context.executor)
+        } else {
+          context.setState(transactionId, TransactionState.FAILED).map(_ => result)(context.executor)
+        }
+      })(context.executor)
+    }
+    tryMutation.flatMap(result => result.map(rows => Future.successful(Some(rows))).getOrElse(tryMutation))(context.executor)
+  }
+
+
 
 }
