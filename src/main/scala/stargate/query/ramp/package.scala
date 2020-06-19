@@ -69,7 +69,7 @@ package object ramp {
       (path, matchEntities(context, transactionId, targetEntityName, conditions).map(_.map(_.map(_(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])))(context.executor))
     }).toMap
     val rootIds = util.sequence(groupedEntities.toList.map(path_ids => resolveReverseRelations(context, transactionId, entityName, path_ids._1, path_ids._2)), context.executor)
-    rootIds.map(rootIds => util.sequence(rootIds).map(idLists => idLists.map(_.toSet).reduce(_.intersect(_)).toList))(context.executor)
+    rootIds.map(rootIds => util.allDefined(rootIds).map(idLists => idLists.map(_.toSet).reduce(_.intersect(_)).toList))(context.executor)
   }
 
 
@@ -113,7 +113,7 @@ package object ramp {
           val recurse = getEntitiesAndRelated(context, transactionId, relations(relationName).targetEntityName, childIds, nestedSelection)
           recurse.map(_.map(result => (relationName, result)))(executor)
         })
-        val sequencedRelated = util.sequence(related, executor).map(relations => util.sequence(relations))(executor)
+        val sequencedRelated = util.sequence(related, executor).map(relations => util.allDefined(relations))(executor)
         sequencedRelated.map(_.map(relation_children => entity ++ relation_children))(executor)
       })))(executor)
       util.flattenFOLFO(entityAndRelations, executor)
@@ -151,7 +151,7 @@ package object ramp {
       val mutationResult = relationMutation(context, transactionId, entityName, entityId, relationName, entity.relations(relationName).targetEntityName, childMutation)
       mutationResult.map(_.map((relationName, _)))
     })
-    val sequencedMutationResults = util.sequence(relationMutationResults, executor).map(util.sequence)(executor)
+    val sequencedMutationResults = util.sequence(relationMutationResults, executor).map(util.allDefined)(executor)
     val relationLinkResults = sequencedMutationResults.map(_.map(relations => {
       val entity: Map[String,Object] = query.write.entityIdPayload(entityId) ++ relations.map(kv => (kv._1, kv._2._1)).toMap
       val changes = relations.map(name_result => {
@@ -172,7 +172,7 @@ package object ramp {
 
   def create(context: Context, transactionId: UUID, entityName: String, payload: CreateMutation): MutationResult = {
     val creates = payload.creates.map(createOne(context, transactionId, entityName, _))
-    util.sequence(creates, context.executor).map(lists => util.sequence(lists).map(data_ops => (data_ops.flatMap(_._1), data_ops.flatMap(_._2))))(context.executor)
+    util.sequence(creates, context.executor).map(lists => util.allDefined(lists).map(data_ops => (data_ops.flatMap(_._1), data_ops.flatMap(_._2))))(context.executor)
   }
 
   def matchMutation(context: Context, transactionId: UUID, entityName: String, payload: MatchMutation): MutationResult = {
@@ -223,7 +223,7 @@ package object ramp {
           }
           unlinks.map(_.map(unlinks => recurse.map(_.map(recurse => (relationName, recurse._1, unlinks ++ recurse._2)))))
         })
-        util.flattenFOLFO(util.sequence(childResults, executor).map(util.sequence), executor).map(_.map(relationsOps => {
+        util.flattenFOLFO(util.sequence(childResults, executor).map(util.allDefined), executor).map(_.map(relationsOps => {
           val entity = Map((schema.ENTITY_ID_COLUMN_NAME, currentEntity(schema.ENTITY_ID_COLUMN_NAME))) ++ relationsOps.map(r => (r._1, r._2)).toMap
           (entity, deleteCurrent ++ relationsOps.flatMap(_._3))
         }))

@@ -114,12 +114,12 @@ package object util {
     implicit val ec: ExecutionContext = executor
     Future.sequence(fs)
   }
-  def sequence[T](os: List[Option[T]]): Option[List[T]] = if(os.contains(None)) None else Some(os.flatten)
+  def allDefined[T](os: List[Option[T]]): Option[List[T]] = if(os.contains(None)) None else Some(os.flatten)
 
   def flattenFOF[T](fof: Future[Option[Future[T]]], executor: ExecutionContext): Future[Option[T]] = fof.flatMap(of => of.map(f => f.map(Some.apply)(executor)).getOrElse(Future.successful(None)))(executor)
   def flattenFOFO[T](fofo: Future[Option[Future[Option[T]]]], executor: ExecutionContext): Future[Option[T]] = fofo.flatMap(ofo => ofo.getOrElse(Future.successful(None)))(executor)
   def flattenFOLFO[T](folfo: Future[Option[List[Future[Option[T]]]]], executor: ExecutionContext): Future[Option[List[T]]] = {
-    folfo.flatMap(olfo => olfo.map(lfo => util.sequence(lfo, executor).map(lo => util.sequence(lo))(executor)).getOrElse(Future.successful(None)))(executor)
+    folfo.flatMap(olfo => olfo.map(lfo => util.sequence(lfo, executor).map(lo => util.allDefined(lo))(executor)).getOrElse(Future.successful(None)))(executor)
   }
   def flattenFOLFOL[T](folfol: Future[Option[List[Future[Option[List[T]]]]]], executor: ExecutionContext): Future[Option[List[T]]] = {
     flattenFOLFO(folfol, executor).map(_.map(_.flatten))(executor)

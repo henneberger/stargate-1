@@ -51,7 +51,7 @@ trait NullKeysTestTrait extends CassandraTestSession {
       Map((keys(0), longOf(1)), (keys(1), longOf(1))),
       Map((keys(0), longOf(1)), (keys(1), longOf(2)))
     )
-    val res = util.await(util.sequence(foos.map(foo => model.mutation.create("foo", foo, session, executor)), executor)).get
+    val res = util.await(util.allDefined(foos.map(foo => model.mutation.create("foo", foo, session, executor)), executor)).get
 
     val conds1 = List[Object](keys(0), "=", longOf(1), keys(1), "=", longOf(1))
     val query1 = Map((keywords.mutation.MATCH, conds1))
