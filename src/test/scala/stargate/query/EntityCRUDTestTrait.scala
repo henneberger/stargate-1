@@ -17,6 +17,7 @@
 package stargate.query
 
 import java.util.UUID
+import java.util.concurrent.Executors
 
 import com.datastax.oss.driver.api.core.CqlSession
 import com.typesafe.config.ConfigFactory
@@ -34,7 +35,6 @@ import scala.util.Random
 trait EntityCRUDTestTrait extends CassandraTestSession {
 
   import EntityCRUDTestTrait._
-  implicit val executor: ExecutionContext = EntityCRUDTestTrait.executor
 
   // checks that two entity trees are the same, ignoring missing or empty-list relations
   def diff(expected: Map[String,Object], queried: Map[String,Object]): Unit = {
@@ -145,9 +145,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     })(executor)
   }
 
-  def crudTest(model: OutputModel, crud: CRUD, session: CqlSession, keyspace: String): Unit = {
-    val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
-    val model = stargate.schema.outputModel(inputModel, keyspace)
+  def crudTest(model: OutputModel, crud: CRUD, executor: ExecutionContext): Unit = {
     implicit val ec: ExecutionContext = EntityCRUDTestTrait.executor
     util.await(model.createTables(session, executor)).get
     model.input.entities.keys.foreach(entityName => {
@@ -185,7 +183,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
     val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
-    crudTest(model, crud, session, keyspace)
+    crudTest(model, crud, executor)
   }
 
   @Test
@@ -194,13 +192,25 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
     val crud = stargate.model.batchedCRUD(model, this.session, executor)
-    crudTest(model, crud, this.session, keyspace)
+    crudTest(model, crud, executor)
+  }
+
+  @Test
+  def rampCrudTest: Unit = {
+    val executor = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(1))
+    val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
+    val keyspace = newKeyspace()
+    val model = stargate.schema.rampOutputModel(inputModel, keyspace)
+    println(model.entityTables.mkString("\n"))
+    println(model.relationTables.mkString("\n"))
+    val crud = stargate.model.rampCRUD(model, this.session, executor)
+    crudTest(model, crud, executor)
   }
 }
 
 object EntityCRUDTestTrait {
 
-  implicit val executor: ExecutionContext = ExecutionContext.global
+  val executor: ExecutionContext = ExecutionContext.global
 
   def create(model: OutputModel, crud: CRUD, entityName: String, executor: ExecutionContext): (Map[String,Object], Future[Map[String,Object]]) = {
     val request = stargate.model.generator.createEntity(model.input.entities, entityName)
