@@ -39,7 +39,7 @@ Minimal testing has been done on Windows, so it is currently unsupported.
 
 2. Download the stargate CLI<sup id="a1">[*](#f1)</sup>, start up local cassandra and stargate instances, then create a database named `myNamespace` from the configuration in step 1.
 ```sh
-curl -O -L "https://github.com/datastax/stargate/releases/download/v0.1.1/stargate_0.1.1_$(uname -s)_x86_64.tar.gz"
+curl -O -L "https://github.com/datastax/stargate/releases/download/v0.3.0/stargate_0.3.0_$(uname -s)_x86_64.tar.gz"
 tar -xzf ./stargate_*.tar.gz
 ./stargate service start --with-cassandra 
 ./stargate apply myNamespace stargate.conf
@@ -49,7 +49,7 @@ tar -xzf ./stargate_*.tar.gz
 
 Create a Todo:
 ```sh
-curl -X POST "http://localhost:8080/v1/api/myNamespace/query/entity/Todo" \
+curl -X POST "http://localhost:8080/v1/api/myNamespace/entity/Todo" \
      -H "content-type: application/json" -d'
 { 
  "todo": "Get stargate running",
@@ -61,7 +61,7 @@ cat ./createResponse.out
 
 Get todos:
 ```sh
-curl -X GET "http://localhost:8080/v1/api/myNamespace/query/entity/Todo" \
+curl -X GET "http://localhost:8080/v1/api/myNamespace/entity/Todo" \
      -H "content-type: application/json" -d'
 { 
  "-match": "all"
@@ -72,7 +72,7 @@ curl -X GET "http://localhost:8080/v1/api/myNamespace/query/entity/Todo" \
 Update todo:
 ```sh
 todoId=$(cat ./createResponse.out | jq -r ".data[0].entityId")
-curl -X PUT "http://localhost:8080/v1/api/myNamespace/query/entity/Todo" \
+curl -X PUT "http://localhost:8080/v1/api/myNamespace/entity/Todo" \
      -H "content-type: application/json" -d'
 { 
  "-match": ["entityId", "=", "'"${todoId}"'"],
