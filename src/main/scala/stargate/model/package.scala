@@ -20,6 +20,7 @@ import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.`type`.{DataType, DataTypes}
 import stargate.cassandra.{CassandraColumn, CassandraTable, DefaultCassandraColumn}
 import stargate.model.queries.predefined.GetQuery
+import stargate.query.pagination
 import stargate.service.validations
 import stargate.util.AsyncList
 
@@ -115,14 +116,23 @@ package object model {
 
   trait CRUD {
     def get(entityName: String, payload: Map[String,Object]): AsyncList[Map[String, Object]]
+    def getAndTruncate(entityName: String, payload: Map[String,Object], limit: Int): Future[List[Map[String,Object]]]
     def create(entityName: String, payload: Object): Future[List[Map[String, Object]]]
     def update(entityName: String, payload: Map[String,Object]): Future[List[Map[String, Object]]]
     def delete(entityName: String, payload: Map[String,Object]): Future[List[Map[String, Object]]]
+
+    def getAndTruncate(model: InputModel, entityName: String, payload: Map[String,Object], limit: Int, executor: ExecutionContext): Future[List[Map[String, Object]]] = {
+      val parsed = stargate.model.queries.parser.parseGet(model.entities, entityName, payload)
+      val async = this.get(entityName, payload)
+      pagination.truncate(model, entityName, parsed.selection, async, limit, 0, executor).map(_._1)(executor)
+    }
   }
   def unbatchedCRUD(model: OutputModel, session: CqlSession, executor: ExecutionContext): CRUD = {
     new CRUD {
       override def get(entityName: String, payload: Map[String,Object]): AsyncList[Map[String, Object]] =
         stargate.query.untyped.get(model, entityName, payload, session, executor)
+      override def getAndTruncate(entityName: String, payload: Map[String,Object], limit: Int): Future[List[Map[String,Object]]] =
+        this.getAndTruncate(model.input, entityName, payload, limit, executor)
       override def create(entityName: String, payload: Object): Future[List[Map[String, Object]]] =
         stargate.query.untyped.createUnbatched(model, entityName, payload, session, executor)
       override def update(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] =
@@ -135,6 +145,8 @@ package object model {
     new CRUD {
       override def get(entityName: String, payload: Map[String,Object]): AsyncList[Map[String, Object]] =
         stargate.query.untyped.get(model, entityName, payload, session, executor)
+      override def getAndTruncate(entityName: String, payload: Map[String,Object], limit: Int): Future[List[Map[String,Object]]] =
+        this.getAndTruncate(model.input, entityName, payload, limit, executor)
       override def create(entityName: String, payload: Object): Future[List[Map[String, Object]]] =
         stargate.query.untyped.createBatched(model, entityName, payload, session, executor)
       override def update(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] =
