@@ -31,7 +31,7 @@ object write {
     tables.flatMap(table => {
       val keyChanged = table.columns.key.combined.exists(col => changes.get(col.name).orNull != null)
       if(keyChanged) {
-        val delete = CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, true), currentEntity)
+        val delete = CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE), currentEntity)
         val insert = InsertOp(table, currentEntity++changes)
         List(delete, insert)
       } else {
@@ -40,7 +40,7 @@ object write {
     })
   }
   def deleteEntity(tables: List[CassandraTable], currentEntity: Map[String,Object]): List[WriteOp] = {
-    tables.map(table => CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, true), currentEntity))
+    tables.map(table => CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE), currentEntity))
   }
 
   def compareAndSet(table: CassandraTable, write: Map[String,Object], previous: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
