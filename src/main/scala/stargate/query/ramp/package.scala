@@ -128,7 +128,7 @@ package object ramp {
 
 
   def relationLink(model: OutputModel, transactionId: UUID, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
-    payload.flatMap(entity => ramp.write.createBidirectionalRelation(model, transactionId, entityName, relationName, parentId, UUID.fromString(entity(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[String])))
+    payload.flatMap(entity => ramp.write.createBidirectionalRelation(model, transactionId, entityName, relationName, parentId, entity(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID]))
   }
   def relationUnlink(model: OutputModel, transactionId: UUID, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
     def ids(entity: Map[String,Object]): Map[String,Object] = Map((schema.RELATION_FROM_COLUMN_NAME, parentId), (schema.RELATION_TO_COLUMN_NAME, entity(schema.ENTITY_ID_COLUMN_NAME)), (schema.TRANSACTION_ID_COLUMN_NAME, entity(schema.TRANSACTION_ID_COLUMN_NAME)))

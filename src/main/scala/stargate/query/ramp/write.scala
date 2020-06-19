@@ -75,7 +75,7 @@ object write {
     val toRelationName = fromRelation.inverseName
     val fromTable = model.relationTables((fromEntity, fromRelationName))
     val toTable = model.relationTables((toEntity, toRelationName))
-    val inverseIds = ids.updated(schema.RELATION_FROM_COLUMN_NAME, ids(schema.TRANSACTION_ID_COLUMN_NAME)).updated(schema.RELATION_TO_COLUMN_NAME, ids(schema.RELATION_FROM_COLUMN_NAME))
+    val inverseIds = ids.updated(schema.RELATION_FROM_COLUMN_NAME, ids(schema.RELATION_TO_COLUMN_NAME)).updated(schema.RELATION_TO_COLUMN_NAME, ids(schema.RELATION_FROM_COLUMN_NAME))
     List(statement(fromTable, transactionId, ids), statement(toTable, transactionId, inverseIds))
   }
   def createBidirectionalRelation(model: OutputModel, transactionId: UUID, fromEntity: String, fromRelationName: String, fromId: UUID, toId: UUID): List[WriteOp] = {
