@@ -155,4 +155,31 @@ package object model {
         stargate.query.untyped.deleteBatched(model, entityName, payload, session, executor)
     }
   }
+  def rampCRUD(model: OutputModel, session: CqlSession, executor: ExecutionContext): CRUD = {
+    val context = stargate.query.ramp.createContext(model, session, executor)
+    new CRUD {
+      override def get(entityName: String, payload: Map[String, Object]): AsyncList[Map[String, Object]] = {
+        val req = stargate.model.queries.parser.parseGet(model.input.entities, entityName, payload)
+        AsyncList.unfuture(stargate.query.ramp.get(context, entityName, req).map(res => pagination.untruncate(model.input, entityName, res.get))(executor), executor)
+      }
+
+      override def getAndTruncate(entityName: String, payload: Map[String, Object], limit: Int): Future[List[Map[String, Object]]] =
+        this.getAndTruncate(model.input, entityName, payload, limit, executor)
+
+      override def create(entityName: String, payload: Object): Future[List[Map[String, Object]]] = {
+        val req = stargate.model.queries.parser.parseCreate(model.input.entities, entityName, payload)
+        stargate.query.ramp.mutation(context, entityName, req).map(_.get)(executor)
+      }
+
+      override def update(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] = {
+        val req = stargate.model.queries.parser.parseUpdate(model.input.entities, entityName, payload)
+        stargate.query.ramp.mutation(context, entityName, req).map(_.get)(executor)
+      }
+
+      override def delete(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] = {
+        val req = stargate.model.queries.parser.parseDelete(model.input.entities, entityName, payload)
+        stargate.query.ramp.delete(context, entityName, req).map(_.get)(executor)
+      }
+    }
+  }
 }
