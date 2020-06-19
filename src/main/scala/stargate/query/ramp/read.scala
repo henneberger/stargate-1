@@ -15,7 +15,7 @@ object read {
   type MaybeReadRows = MaybeRead[Map[String,Object]]
 
   def filterLastValidState(context: Context, before: UUID, states: List[Map[String,Object]]): MaybeReadRows = {
-    val beforeStates = states.reverse.dropWhile(_(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID].compareTo(before) < 0)
+    val beforeStates = states.reverse.dropWhile(_(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID].compareTo(before) >= 0)
     beforeStates.headOption.map(head => {
       val transactionId = head(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID]
       context.getState(transactionId).map(status => {
