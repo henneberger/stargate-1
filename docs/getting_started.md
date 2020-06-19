@@ -57,6 +57,7 @@ curl -X POST "http://localhost:8080/v1/api/myNamespace/entity/Todo" \
 }
 ' > ./createResponse.out
 cat ./createResponse.out
+{"data":[{"entityId":"50d5b8f6-3f8e-4d60-ba28-785a1412f542","-action":"created"}]}
 ```
 
 Get todos:

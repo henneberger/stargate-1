@@ -86,16 +86,34 @@ For example
 curl -X GET "http://localhost:8080/v1/api/test/continueQuery/8ffac247-77a5-4f38-94c0-ad2b0e95c9ae"
 ```
 
-Result:
+Result (expanded out for visual effect):
 ```
-[{"title":"Create a Relation","isComplete":false,"user":[]},{"-continue":"8ffac247-77a5-4f38-94c0-ad2b0e95c9ae"}]
+{ 
+  "data": [{"title":"Create a Relation","isComplete":false,"user":[]}],
+  "continue": {
+  	"continueId": "46b23d15-4bc0-4b0b-91c0-dd83058df77f",
+        "entities": {
+            "0c1dd989-a568-41bd-bb80-440c717538e7": {
+                "user": {
+                    "entities": {
+                        "8a93b5f3-976a-4ac0-8a1e-1905d9e54873": {}
+                    }
+                }
+	   }
+       }
+   }
+}
 ```
 
 You can continue to call the paging api with the same token. The page is complete if no continue token is at the end of the list.
+
 ## Mutations
 Stargate allows a flexible API to manipulate data in Cassandra.
+
 ### Create
+
 Create operations are any `POST` request on an entity's path. Create operations have a root entity that will be created as well as relationships that can be linked, unlinked, or replaced.
+
 ```sh
 curl -X POST "http://localhost:8080/v1/api/test/entity/Todo" \
      -H "content-type: application/json" -d'
@@ -105,6 +123,7 @@ curl -X POST "http://localhost:8080/v1/api/test/entity/Todo" \
 }
 '
 ```
+
 ### Update 
 Update operations are any `PUT` request on an entity's path. Update operations require a `match` clause. Both scalars and relationships can be updated with an update statement.
 ```sh

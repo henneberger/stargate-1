@@ -148,7 +148,7 @@ extends LazyLogging{
               .addMediaType("application/json", new MediaType()
                 .schema(new Schema().`type`("string").example(getSample)))
           )))
-      val url = s"/$StargateApiVersion/api/$ns/query/entity/${ev._1}"
+      val url = s"/$StargateApiVersion/api/$ns/entity/${ev._1}"
       pathItems.addOne(url -> path)
     })
 
@@ -174,7 +174,7 @@ extends LazyLogging{
                 .example("5ed0b80b-2934-4c58-acba-830d8bce7d13"))
               )))
       )
-    val continueUrl = s"/$StargateApiVersion/api/$ns/query/continue/{id}"
+    val continueUrl = s"/$StargateApiVersion/api/$ns/continueQuery/{id}"
     pathItems.addOne(continueUrl, continuePath)
     val storedSample = """
                          | {
@@ -202,7 +202,7 @@ extends LazyLogging{
               .schema(new Schema().`type`("string").example(storedSample))
             )))
       )
-      val url = s"/$StargateApiVersion/api/$ns/query/stored/${ev._1}"
+      val url = s"/$StargateApiVersion/api/$ns/query/${ev._1}"
       pathItems.addOne(url -> path)
     })
     pathItems.toList

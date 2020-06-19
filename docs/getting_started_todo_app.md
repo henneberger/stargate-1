@@ -67,7 +67,7 @@ The example below defines an entity named `Todo` and gives it two fields: `title
     }
     '
     ```
-    Now let’s check that the database has our change
+    Now let's check that the database has our change
     ```sh
     curl -X GET "http://localhost:8080/v1/api/test/query/entity/Todo" \
          -H "content-type: application/json" -d'
@@ -174,7 +174,10 @@ Now we’re ready to create and then query our first Todos by User.
                 "entityId": "268e0cf2-b896-42ec-98b1-b91c085c7ffd",
                 "username": "John Doe"
             }]
-        }]
+        }],
+	"continue": {
+	    "entities": {}
+	}
     }
     ```
 
