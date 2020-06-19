@@ -1,15 +1,17 @@
 package stargate.query
 
 import java.util.UUID
+import java.util.concurrent.{Executors, TimeUnit}
 
 import com.datastax.oss.driver.api.core.CqlSession
+import stargate.cassandra.CassandraTable
 import stargate.model.queries._
 import stargate.model.{OutputModel, ScalarCondition}
 import stargate.query.ramp.read.{MaybeRead, MaybeReadRows}
 import stargate.query.ramp.write.{CompareAndSetOp, WriteOp}
 import stargate.schema.GroupedConditions
 import stargate.util.AsyncList
-import stargate.{keywords, query, schema, util}
+import stargate.{cassandra, keywords, query, schema, util}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -282,6 +284,34 @@ package object ramp {
       case unlink: UnlinkMutation => unlinkMutation(context, transactionId, parentEntityName, parentId, parentRelation, entityName, unlink.`match`)
       case replace: ReplaceMutation => replaceMutation(context, transactionId, parentEntityName, parentId, parentRelation, entityName, replace.mutation)
     }
+  }
+
+  def executeMutation(context: Context, mutation: MutationResult): MaybeReadRows = {
+    val executor = context.executor
+    val result = mutation.map(_.map(entities_ops => {
+      val (entities, writes) = entities_ops
+      val writeResults = util.sequence(writes.map(write => ramp.write.execute(context, write)), executor)
+      writeResults.flatMap(writeResults => {
+        if(writeResults.forall(_.success)) {
+          val cleanup = Executors.newScheduledThreadPool(1)
+          val cleanupRunnable: Runnable = () => {
+            writeResults.foreach(writeResult => {
+              writeResult.cleanup.foreach(cleanup => {
+                cassandra.executeAsync(context.session, query.write.deleteEntityStatement(cleanup._1, cleanup._2).build, executor)
+              })
+            })
+          }
+          cleanup.schedule(cleanupRunnable, 10, TimeUnit.SECONDS)
+          Future.successful(Some(entities))
+        } else {
+          val doit = writeResults.flatMap(writeResult => {
+            writeResult.writes.map(write => cassandra.executeAsync(context.session, query.write.deleteEntityStatement(write._1, write._2).build, executor))
+          })
+          util.sequence(doit, executor).map(_ => None)(executor)
+        }
+      })(executor)
+    }))(executor)
+    util.flattenFOFO(result, executor)
   }
 
 }
