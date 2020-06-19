@@ -19,22 +19,22 @@ package stargate.query
 import com.datastax.oss.driver.api.core.CqlSession
 import com.typesafe.config.ConfigFactory
 import org.junit.Test
-import stargate.model.{OutputModel, parser}
-import stargate.{CassandraTestSession, util}
+import stargate.model.{CRUD, InputModel, OutputModel, parser}
+import stargate.{CassandraTestSession, model, util}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
 
 trait PaginationTestTrait extends CassandraTestSession {
 
-  def generate(model: OutputModel, branching: Int, session: CqlSession, executor: ExecutionContext): Future[Unit] = {
+  def generate(crud: CRUD, branching: Int, executor: ExecutionContext): Future[Unit] = {
     val c = List.range(0, branching).map(_ => Map.empty[String,Object])
     val b = List.range(0, branching).map(_ => Map(("c", c)))
     val a = List.range(0, branching).map(_ => Map(("b", b), ("c", c)))
-    model.mutation.create("A", a, session, executor).map(_ => ())(executor)
+    crud.create("A", a).map(_ => ())(executor)
   }
 
-  def query(model: OutputModel, limit: Int, branching: Int, session: CqlSession, executor: ExecutionContext): Unit = {
+  def query(model: InputModel, crud: CRUD, limit: Int, branching: Int, executor: ExecutionContext): Unit = {
     val req = Map[String,Object](
       (stargate.keywords.mutation.MATCH, "all"),
       (stargate.keywords.pagination.LIMIT, Integer.valueOf(limit)),
@@ -48,23 +48,26 @@ trait PaginationTestTrait extends CassandraTestSession {
         )),
       ))
     )
-    val (entities, continue, streams) = Await.result(stargate.query.untyped.getAndTruncate(model, "A", req, limit, 0, session, executor), Duration.Inf)
+    val parsedReq = stargate.model.queries.parser.parseGet(model.entities, "A", req)
+    val async = crud.get("A", req)
+    val (entities, continue, streams) = Await.result(pagination.truncate(model, "A", parsedReq.selection, async, limit, 0, executor), Duration.Inf)
     assert(entities.length <= limit)
     streams.values.foreach((ttl_stream) => Await.result(ttl_stream.entities.length(executor), Duration.Inf) == branching - limit)
   }
 
-  def paginationTest(model: OutputModel, branching: Int, limit: Int, session: CqlSession, executor: ExecutionContext): Unit = {
-    Await.result(generate(model, branching, session, executor), Duration.Inf)
-    query(model, limit, branching, session, executor)
+  def paginationTest(model: InputModel, crud: CRUD, branching: Int, limit: Int, executor: ExecutionContext): Unit = {
+    Await.result(generate(crud, branching, executor), Duration.Inf)
+    query(model, crud, limit, branching, executor)
   }
 
   @Test
   def paginationTest: Unit = {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("pagination-schema.conf"))
+    val executor = ExecutionContext.global
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
-    val executor = ExecutionContext.global
+    val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
     util.await(model.createTables(session, executor)).get
-    paginationTest(model, 5, 3, session, executor)
+    paginationTest(model.input, crud, 5, 3, executor)
   }
 }

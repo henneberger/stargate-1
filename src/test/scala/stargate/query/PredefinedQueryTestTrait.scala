@@ -33,10 +33,11 @@ trait PredefinedQueryTestTrait extends CassandraTestSession {
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
     val executor = ExecutionContext.global
+    val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
     util.await(model.createTables(session, executor)).get
 
     List.range(0, 10).foreach(_ => {
-      val entity = EntityCRUDTestTrait.createEntityWithIds(model, model.mutation, "A", session, executor)
+      val entity = EntityCRUDTestTrait.createEntityWithIds(model, crud, "A", executor)
       Await.result(entity, Duration.Inf)
     })
     val req = queries.predefined.transform(model.input.queries("getAandB"),  Map((stargate.keywords.mutation.MATCH, Map.empty)))
