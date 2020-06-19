@@ -38,7 +38,8 @@ object pagination {
   def untruncate(model: InputModel, entityName: String, entities: List[Map[String,Object]]): AsyncList[Map[String,Object]] = {
     val relations = model.entities(entityName).relations
     val updatedEntities = entities.map(entity => {
-      entity ++ entity.toList.filter(kv => relations.contains(kv._1)).map(kv => untruncate(model, relations(kv._1).targetEntityName, kv._2.asInstanceOf[List[Map[String,Object]]]))
+      val includedRelations = entity.toList.filter(kv => relations.contains(kv._1))
+      entity ++ includedRelations.map(kv => (kv._1, untruncate(model, relations(kv._1).targetEntityName, kv._2.asInstanceOf[List[Map[String,Object]]])))
     })
     AsyncList.fromList(updatedEntities)
   }
