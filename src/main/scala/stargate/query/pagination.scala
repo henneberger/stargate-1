@@ -33,6 +33,16 @@ object pagination {
   type Streams = Map[UUID, StreamEntry]
   type TruncateResult = Future[(List[Map[String,Object]], Map[String,Object], Streams)]
 
+
+  // wraps eager reads (tree of Lists) to look like lazy reads (tree of AsyncLists)
+  def untruncate(model: InputModel, entityName: String, entities: List[Map[String,Object]]): AsyncList[Map[String,Object]] = {
+    val relations = model.entities(entityName).relations
+    val updatedEntities = entities.map(entity => {
+      entity ++ entity.toList.filter(kv => relations.contains(kv._1)).map(kv => untruncate(model, relations(kv._1).targetEntityName, kv._2.asInstanceOf[List[Map[String,Object]]]))
+    })
+    AsyncList.fromList(updatedEntities)
+  }
+
   // given a tree of entities in (lazy) AsyncLists, chop off the first N entities, and return a uuid pointing to the rest of the list
   def truncate(model: InputModel, entityName: String, getRequest: GetSelection,
                entities: AsyncList[Map[String,Object]], defaultLimit: Integer, defaultTTL: Integer, executor: ExecutionContext): TruncateResult = {
