@@ -34,12 +34,12 @@ object read {
 
   def flatten[T](maybeReads: AsyncList[MaybeRead[T]], executor: ExecutionContext): MaybeRead[T] = {
     val unwrapped = AsyncList.unfuture(maybeReads, executor)
-    val anyFailed = unwrapped.filter(_.isEmpty, executor).isEmpty(executor)
-    anyFailed.flatMap(anyFailed => {
-      if(anyFailed) {
-        Future.successful(None)
-      } else {
+    val noneFailed = unwrapped.filter(_.isEmpty, executor).isEmpty(executor)
+    noneFailed.flatMap(noneFailed => {
+      if(noneFailed) {
         unwrapped.toList(executor).map(list => Some(list.flatMap(_.get)))(executor)
+      } else {
+        Future.successful(None)
       }
     })(executor)
   }
