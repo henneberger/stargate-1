@@ -105,6 +105,9 @@ object read {
   def selectStatement(table: CassandraTable, values: Map[String,Object]): Select = {
     selectStatement(table, values.toList.map(v => ScalarCondition[Object](v._1, ScalarComparison.EQ, v._2)))
   }
+  def selectKeysStatement(table: CassandraTable, values: Map[String,Object]): Select = {
+    selectStatement(table, values.filter(kv => table.columns.key.combinedMap.contains(kv._1)))
+  }
 
   def relatedSelect(keyspace: String, relationTable: String, fromIds: List[UUID], session: CqlSession,  executor: ExecutionContext): AsyncList[UUID] = {
     val conditions = List(ScalarCondition[Object](schema.RELATION_FROM_COLUMN_NAME, ScalarComparison.IN, fromIds))

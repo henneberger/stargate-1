@@ -47,7 +47,7 @@ object write {
     implicit val ec: ExecutionContext = executor
     for {
       _ <- cassandra.executeAsync(session, query.write.insertStatement(table, write).build, executor)
-      rows <- cassandra.queryAsync(session, query.read.selectStatement(table, previous.removed(TRANSACTION_ID_COLUMN_NAME)).build, executor).toList(executor)
+      rows <- cassandra.queryAsync(session, query.read.selectKeysStatement(table, previous.removed(TRANSACTION_ID_COLUMN_NAME)).build, executor).toList(executor)
       latestTransactions = rows.takeRight(2).map(_.getUuid(Strings.doubleQuote(TRANSACTION_ID_COLUMN_NAME)))
       success = latestTransactions == List(previous(TRANSACTION_ID_COLUMN_NAME), write(TRANSACTION_ID_COLUMN_NAME))
       writes = List((table, write))
