@@ -39,7 +39,7 @@ object read {
     val column = row.get(condition.field).orNull.asInstanceOf[Comparable[Object]]
     val argument = condition.argument
     def listArgument: List[Object] = argument.asInstanceOf[List[Object]]
-    def nonNull = column == null || argument == null
+    def nonNull = column != null && argument != null
     def bothNull = column == null && argument == null
     def comparison = column.compareTo(argument)
     condition.comparison match {
