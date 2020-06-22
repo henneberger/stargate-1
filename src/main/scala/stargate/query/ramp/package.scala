@@ -213,10 +213,10 @@ package object ramp {
         val childResults = relations.toList.map(name_relation => {
           val (relationName, relation) = name_relation
           val childRows = ramp.read.resolveRelation(context, transactionId, entityName, List(id), relationName)
-          // TODO recursive deletes wont work due to double-deleting bidi relations
+          // TODO: dont double delete inverse relations
           val unlinks = childRows.map(_.map(rows => rows.flatMap(row => ramp.write.deleteBidirectionalRelation(context.model, transactionId, entityName, relationName, row))))
           val recurse = if(payload.relations.contains(relationName)) {
-            val childIds = childRows.map(_.map(_.map(_(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])))
+            val childIds = childRows.map(_.map(rows => rows.map(_(schema.RELATION_TO_COLUMN_NAME).asInstanceOf[UUID])))
             delete(context, transactionId, relation.targetEntityName, childIds, payload.relations(relationName))
           } else {
             Future.successful(Some(List.empty, List.empty))
