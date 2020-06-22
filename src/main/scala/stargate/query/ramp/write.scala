@@ -29,9 +29,10 @@ object write {
   }
   def updateEntity(tables: List[CassandraTable], currentEntity: Map[String,Object], changes: Map[String,Object]): List[WriteOp] = {
     tables.flatMap(table => {
-      val keyChanged = table.columns.key.combined.exists(col => changes.get(col.name).orNull != null)
+      val keyChanged = table.columns.key.combinedMap.removed(schema.TRANSACTION_ID_COLUMN_NAME).values.exists(col => changes.contains(col.name))
       if(keyChanged) {
-        val delete = CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE), currentEntity)
+        val deleteRow = currentEntity ++ Map((schema.TRANSACTION_ID_COLUMN_NAME, changes(schema.TRANSACTION_ID_COLUMN_NAME)), (schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE))
+        val delete = CompareAndSetOp(table, deleteRow, currentEntity)
         val insert = InsertOp(table, currentEntity++changes)
         List(delete, insert)
       } else {

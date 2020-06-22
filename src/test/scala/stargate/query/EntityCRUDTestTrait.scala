@@ -25,7 +25,7 @@ import org.junit.Assert._
 import org.junit.Test
 import stargate.model._
 import stargate.schema.ENTITY_ID_COLUMN_NAME
-import stargate.{CassandraTestSession, keywords, query, util}
+import stargate.{CassandraTestSession, keywords, query, schema, util}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -45,7 +45,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
         val getValList = getVal.asInstanceOf[List[Map[String,Object]]].sortBy(_(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])
         assertEquals(createVal.length, getValList.length)
         createVal.zip(getValList).map(cg => diff(cg._1, cg._2))
-      } else {
+      } else if(!Set(schema.TRANSACTION_ID_COLUMN_NAME, schema.TRANSACTION_DELETED_COLUMN_NAME).contains(field)) {
         assertEquals(getVal, expected(field))
       }
     })
