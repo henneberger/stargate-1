@@ -201,8 +201,6 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.rampOutputModel(inputModel, keyspace)
-    println(model.entityTables.mkString("\n"))
-    println(model.relationTables.mkString("\n"))
     val crud = stargate.model.rampCRUD(model, this.session, executor)
     crudTest(model, crud, executor)
   }
