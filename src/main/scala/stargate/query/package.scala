@@ -272,6 +272,7 @@ package object query {
       })(context.executor)
     })(context.executor)
   }
+  // TODO: also include link statements in result (instead of appending them separately afterwards)
   // perform nested mutation (create/update/match), then wrap resulting entity ids with link/unlink/replace to be handled by parent entity
   def relationMutation(context: Context, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: RelationMutation): MutationResult = {
     payload match {
