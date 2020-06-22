@@ -134,7 +134,7 @@ package object http {
    * @return string with all of the // replaced with /
    */
   def sanitizePath(path: String): String = {
-    pathRegex.matcher(path).replaceAll("/")
+    pathRegex.matcher(path.stripSuffix("/")).replaceAll("/")
   }
 
   /** 

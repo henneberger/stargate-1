@@ -32,6 +32,15 @@ trait SwaggerServletTest extends HttpClientTestTrait {
   }
 
   @Test
+  def testSwaggerEntityHtmlRendersWithTrailingSlash(): Unit = {
+    val r = httpGet(wrap(s"api-docs/${sc.namespace}/swagger/"), "text/html", "")
+    assertEquals(200, r.statusCode)
+    assertTrue(r.contentType.isDefined)
+    assertEquals(s"text/html;charset=utf-8", r.contentType.get)
+    assertThat("cannot find swagger url", r.body.get, containsString(s"${sc.namespace}/swagger.json"))
+  }
+
+  @Test
   def testSwaggerEntityJsonRenders(): Unit = {
     val r = httpGet(wrap(s"api-docs/${sc.namespace}/swagger.json"), "application/json", "")
     assertEquals(200, r.statusCode)
