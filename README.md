@@ -74,7 +74,7 @@ Run the following:
 
     git clone git@github.com:datastax/stargate
     mvn compile test
-    mvn exec:exec #with DSE or Apache Cassandra running in the background
+    mvn exec:java #with DSE or Apache Cassandra running in the background 
 
 If all this is working satisfactory you are ready to develop new features for Stargate.
 
