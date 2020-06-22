@@ -38,6 +38,7 @@ limitations under the License.
 				<configuration>
 					<archive>
 						<manifest>
+							<!--set the version when  getClass().getPackage().getImplementationVersion() method is called -->
 							<addDefaultImplementationEntries>true</addDefaultImplementationEntries>
 							<addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
 						</manifest>

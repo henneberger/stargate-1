@@ -36,6 +36,7 @@ import stargate.service.security.BasicAuthFilter
 package object service {
   private val logger = Logger("stargage.service")
   val StargateApiVersion = "v1"
+  // the getImplementationVersion is set by maven-jar-plugin
   val StargateVersion: String = getClass.getPackage().getImplementationVersion
 
   def logStartup() = {
