@@ -47,7 +47,7 @@ object read {
   def filterLastValidStates(context: Context, before: UUID, rows: AsyncList[Map[String,Object]], key: CassandraKey): MaybeReadRows = {
     val executor = context.executor
     val keyWithoutTransactionId = key.combinedMap.removed(schema.TRANSACTION_ID_COLUMN_NAME)
-    def groupKey(entity: Map[String,Object]) = keyWithoutTransactionId.view.mapValues(c => entity.get(c.name).orNull)
+    def groupKey(entity: Map[String,Object]) = keyWithoutTransactionId.view.mapValues(c => entity.get(c.name).orNull).toMap
     val grouped = AsyncList.contiguousGroups(rows, groupKey, executor)
     flatten(grouped.map(filterLastValidState(context, before, _), executor), executor)
   }
