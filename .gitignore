@@ -9,6 +9,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+
 target/
 pom.xml.tag
 pom.xml.releaseBackup
@@ -44,8 +45,7 @@ venv
 .project
 .settings
 stargate-clone*
-src/main/.DS_Store
-src/.DS_Store
+.DS_Store
 
 .scalafmt.conf
 
