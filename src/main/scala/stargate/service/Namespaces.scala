@@ -33,6 +33,7 @@ import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
+import java.{util => ju}
 
 class Namespaces(datamodelRepoTable: CassandraTable, cqlSession: CqlSession) 
 extends LazyLogging{
@@ -143,13 +144,74 @@ extends LazyLogging{
           .addParametersItem(new QueryParameter()
             .name("payload")
             .required(true)
-          .description("payload to update entity")
+          .description("query payload")
             .content(new Content()
               .addMediaType("application/json", new MediaType()
                 .schema(new Schema().`type`("string").example(getSample)))
           )))
       val url = s"/$StargateApiVersion/api/$ns/entity/${ev._1}"
       pathItems.addOne(url -> path)
+      //paths for entityId ..everything but post
+      val entityIdPath = new PathItem()
+      val sampleEntityId = ju.UUID.randomUUID();
+      entityIdPath.get(new Operation()
+        .tags(List(ev._1).asJava)
+        .responses(new ApiResponses().addApiResponse("200", new ApiResponse().description("success")
+          .content(new Content().addMediaType("application/json",
+            new MediaType()
+         //     .schema(new Schema().$ref(s"#/components/schemas/$ev._1"))
+          ))))
+          .addParametersItem(new PathParameter()
+            .name("entityId")
+            .required(true)
+          .description("entityId to get")
+            .content(new Content()
+              .addMediaType("application/json", new MediaType()
+                .schema(new Schema().`type`("string").example(sampleEntityId.toString)))
+          ))
+      )
+      //TODO: this looks like a bug but intentionally using create here as it will 
+      //generate a valid enough body for updates and will not include 
+      //the match conditions that the updateSample does, this is 
+      //a temporary hack and should be removed as soon as we have a new generator
+      //written for updates that does not do the parent match condition.
+      val updateEntitySample = util.toPrettyJson(generator.randomCreateRequest(outputModel.input.entities, ev._1))
+      entityIdPath.put(new Operation()
+        .tags(List(ev._1).asJava)
+        .responses(new ApiResponses().addApiResponse("200", new ApiResponse().description("success")
+          .content(new Content().addMediaType("application/json",
+            new MediaType()
+             // .schema(new Schema().$ref(s"#/components/schemas/${ev._1}"))
+              ))))
+        .requestBody(new RequestBody()
+          .description("payload to update entity")
+          .content(new Content()
+            .addMediaType("application/json", new MediaType()
+                .schema(new Schema().`type`("string").example(updateSample))
+          )))
+        .addParametersItem(new PathParameter()
+            .name("entityId")
+            .required(true)
+          .description("entityId to get")
+            .content(new Content()
+              .addMediaType("application/json", new MediaType()
+                .schema(new Schema().`type`("string").example(sampleEntityId.toString)))
+          ))
+      )
+      entityIdPath.delete(new Operation()
+        .tags(List(ev._1).asJava)
+          .responses(new ApiResponses().addApiResponse("200", new ApiResponse().description("success")))
+        .addParametersItem(new PathParameter()
+            .name("entityId")
+            .required(true)
+          .description("entityId to delete")
+            .content(new Content()
+              .addMediaType("application/json", new MediaType()
+                .schema(new Schema().`type`("string").example(sampleEntityId.toString)))
+          ))
+      )
+      val entityIdUrl = s"/$StargateApiVersion/api/$ns/entity/${ev._1}/{entityId}"
+      pathItems.addOne(entityIdUrl -> entityIdPath)
     })
 
     val continuePath = new PathItem()
