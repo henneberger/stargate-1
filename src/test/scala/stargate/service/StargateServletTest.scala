@@ -50,9 +50,23 @@ trait StargateServletTest extends HttpClientTestTrait with KeyspaceRegistry {
     val newNamespace = this.registerKeyspace(s"testCreate${sc.rand.nextInt(2000)}")
     var r = httpPost(wrap(s"${StargateApiVersion}/api/${newNamespace}/schema"), "application/hocon", Source.fromResource("schema.conf").getLines().mkString("\n"))
     assertEquals("uanble to post schema", 200, r.statusCode)
-    r = httpDelete(wrap(s"${StargateApiVersion}/api/${newNamespace}/schema"), "application/json", "")
-    assertEquals("unable to delete namespace", 200, r.statusCode)
-
+    //deleting right after creating can cause a race, better to just retry every 100 milliseconds 
+    def deleteTest (): Int = {
+      var statusCode: Int = -1
+        for ( a <- 0 to 5){
+          Thread.sleep(100)
+          r = httpDelete(wrap(s"${StargateApiVersion}/api/${newNamespace}/schema"), "application/json", "")
+          statusCode = r.statusCode
+          if (statusCode == 200){
+            //quit early
+            return statusCode;
+          } else {
+            println(s"WARN retrying delete operation because statusCode returned $statusCode")
+          }
+        }
+        return statusCode
+    }
+    assertEquals("unable to delete namespace", 200, deleteTest())
     //validate there is no endpoint to hit
     val getQuery = """{"-match":["firstName","=", "Steve"]}"""
     val url = wrap(s"${StargateApiVersion}/api/${newNamespace}/entity/${sc.entity}")
