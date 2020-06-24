@@ -18,6 +18,7 @@ package stargate
 
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.`type`.{DataType, DataTypes}
+import org.apache.cassandra.tools.NodeProbe
 import stargate.cassandra.{CassandraColumn, CassandraTable, DefaultCassandraColumn}
 import stargate.model.queries.predefined.GetQuery
 import stargate.query.pagination
@@ -155,8 +156,8 @@ package object model {
         stargate.query.untyped.deleteBatched(model, entityName, payload, session, executor)
     }
   }
-  def rampCRUD(model: OutputModel, session: CqlSession, executor: ExecutionContext): CRUD = {
-    val context = stargate.query.ramp.createContext(model, session, executor)
+  def rampCRUD(model: OutputModel, session: CqlSession, nodeProbe: NodeProbe, executor: ExecutionContext): CRUD = {
+    val context = stargate.query.ramp.createContext(model, session, nodeProbe, executor)
     new CRUD {
       override def get(entityName: String, payload: Map[String, Object]): AsyncList[Map[String, Object]] = {
         val req = stargate.model.queries.parser.parseGet(model.input.entities, entityName, payload)
