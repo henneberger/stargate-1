@@ -4,10 +4,10 @@ import java.util.UUID
 
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.internal.core.util.Strings
-import stargate.{cassandra, query, schema}
 import stargate.cassandra.CassandraTable
 import stargate.model.OutputModel
 import stargate.schema.{TRANSACTION_DELETED_COLUMN_NAME, TRANSACTION_ID_COLUMN_NAME}
+import stargate.{cassandra, query, schema}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -40,8 +40,9 @@ object write {
       }
     })
   }
-  def deleteEntity(tables: List[CassandraTable], currentEntity: Map[String,Object]): List[WriteOp] = {
-    tables.map(table => CompareAndSetOp(table, currentEntity.updated(schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE), currentEntity))
+  def deleteEntity(tables: List[CassandraTable], transactionId: UUID, entity: Map[String,Object]): List[WriteOp] = {
+    val deleteWrite = entity ++ Map((schema.TRANSACTION_ID_COLUMN_NAME, transactionId), (schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE))
+    tables.map(table => CompareAndSetOp(table, deleteWrite, entity))
   }
 
   def compareAndSet(table: CassandraTable, write: Map[String,Object], previous: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {

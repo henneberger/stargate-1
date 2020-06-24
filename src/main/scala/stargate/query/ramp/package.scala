@@ -209,7 +209,7 @@ package object ramp {
     val result = ids.map(_.map(ids => ids.map(id => {
       val state = ramp.read.entityIdToLastValidState(context, transactionId, entityName, id)
       val deleteResult = state.map(_.map(_.map(currentEntity => {
-        val deleteCurrent = ramp.write.deleteEntity(context.model.entityTables(entityName), currentEntity)
+        val deleteCurrent = ramp.write.deleteEntity(context.model.entityTables(entityName), transactionId, currentEntity)
         val childResults = relations.toList.map(name_relation => {
           val (relationName, relation) = name_relation
           val childRows = ramp.read.resolveRelation(context, transactionId, entityName, List(id), relationName)
