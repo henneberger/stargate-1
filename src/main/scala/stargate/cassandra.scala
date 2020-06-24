@@ -32,6 +32,7 @@ import stargate.util.AsyncList
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 import scala.jdk.FutureConverters._
+import scala.jdk.CollectionConverters._
 
 /**
   * provides most of the cassandra query methods and schema modification support
@@ -252,12 +253,13 @@ object cassandra extends LazyLogging {
     *
     * @param session active CqlSession
     * @param name keyspace to create
-    * @param replication replication factor to use
+    * @param replication replication factor to use. note uses NetworkTopologyStrategy
     * @param executor executor thread pool to use
     * @return future to execute later
     */
-  def createKeyspaceAsync(session: CqlSession, name: String, replication: Int, executor: ExecutionContext): Future[Unit] = {
-    val create = session.executeAsync(SchemaBuilder.createKeyspace(Strings.doubleQuote(name)).ifNotExists().withSimpleStrategy(replication).build.setTimeout(schemaOpTimeout)).asScala
+  def createKeyspaceAsync(session: CqlSession, name: String, replication: Map[String, Integer], executor: ExecutionContext): Future[Unit] = {
+    val create = session.executeAsync(SchemaBuilder.createKeyspace(Strings.doubleQuote(name)).ifNotExists()
+      .withNetworkTopologyStrategy(replication.asJava).build.setTimeout(schemaOpTimeout)).asScala
     val agreement = create.flatMap(_ => session.checkSchemaAgreementAsync().asScala)(executor)
     agreement.map(require(_, s"failed to reach schema agreement after creating keyspace: ${name}"))(executor)
   }
@@ -269,7 +271,7 @@ object cassandra extends LazyLogging {
     * @param name keyspace to create
     * @param replication replication factor to use
     */
-  def createKeyspace(session: CqlSession, name: String, replication: Int): Unit = util.await(createKeyspaceAsync(session, name, replication, util.newCachedExecutor)).get
+  def createKeyspace(session: CqlSession, name: String, replication: Map[String, Integer]): Unit = util.await(createKeyspaceAsync(session, name, replication, util.newCachedExecutor)).get
 
   /**
     * deletes the entire keyspace specified but does so asynchronously
@@ -302,7 +304,7 @@ object cassandra extends LazyLogging {
     * @param executor executor thread pool to use
     * @return a future to execute later
     */
-  def recreateKeyspaceAsync(session: CqlSession, keyspace: String, replication: Int, executor: ExecutionContext): Future[Unit] = {
+  def recreateKeyspaceAsync(session: CqlSession, keyspace: String, replication: Map[String, Integer], executor: ExecutionContext): Future[Unit] = {
     wipeKeyspaceAsync(session, keyspace, executor).flatMap(_ => createKeyspaceAsync(session, keyspace, replication, executor))(executor)
   }
 
@@ -313,5 +315,5 @@ object cassandra extends LazyLogging {
     * @param keyspace keyspace to wipe and reload
     * @param replication replication factor to specify on the new keyspace
     */
-  def recreateKeyspace(session: CqlSession, keyspace: String, replication: Int): Unit = util.await(recreateKeyspaceAsync(session, keyspace, replication, util.newCachedExecutor)).get
+  def recreateKeyspace(session: CqlSession, keyspace: String, replication: Map[String, Integer]): Unit = util.await(recreateKeyspaceAsync(session, keyspace, replication, util.newCachedExecutor)).get
 }

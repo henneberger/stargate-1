@@ -25,6 +25,7 @@ import stargate.service.config.CassandraClientConfig
 import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 import scala.util.{Random, Try}
+import scala.collection.immutable.HashMap
 
 trait CassandraTestSession {
   def session: CqlSession
@@ -39,6 +40,7 @@ trait CassandraTest extends LazyLogging {
   val image = "cassandra:3.11.6"
   private val persistentDseContainer = "stargate-tests-cassandra"
   private val dataCenter: String = "datacenter1"
+  private val replication: Map[String, Integer] = HashMap(dataCenter -> 1)
 
   private var cqlPort: Int = _
   private var dockerStarted: Boolean = true
@@ -62,13 +64,13 @@ trait CassandraTest extends LazyLogging {
   }
 
   def clientConfig: CassandraClientConfig = {
-    CassandraClientConfig(List(("localhost", cqlPort)), dataCenter, 1, "cassandra", "cassandra", "PlainTextAuthProvider")
+    CassandraClientConfig(List(("localhost", cqlPort)), dataCenter, replication, "cassandra", "cassandra", "PlainTextAuthProvider")
   }
 
   def newKeyspace(): String = {
     val keyspace = ("keyspace" + Random.alphanumeric.take(10).mkString).toLowerCase
     logger.info("creating keyspace: {}", keyspace)
-    cassandra.createKeyspace(cqlSession, keyspace, 1)
+    cassandra.createKeyspace(cqlSession, keyspace, replication)
     registerKeyspace(keyspace)
   }
   def registerKeyspace(keyspace: String): String = {

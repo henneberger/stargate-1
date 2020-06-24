@@ -18,6 +18,7 @@ package stargate.service.config
 import scala.beans.BeanProperty
 import CassandraClientConfig._
 import com.typesafe.config.Config
+import scala.collection.immutable.HashMap
 /**
   * properties needed to create a cassandra client
   *
@@ -30,7 +31,7 @@ import com.typesafe.config.Config
 case class CassandraClientConfig(
   @BeanProperty val cassandraContactPoints: List[(String, Int)],
   @BeanProperty val cassandraDataCenter: String = DEFAULT_DATACENTER,
-  @BeanProperty val cassandraReplication: Int = DEFAULT_REPLICATION,
+  @BeanProperty val cassandraReplication: Map[String, Integer] = DEFAULT_REPLICATION,
   @BeanProperty val cassandraUserName: String = DEFAULT_USERNAME,
   @BeanProperty val cassandraPassword: String = DEFAULT_PASSWORD,
   @BeanProperty val cassandraAuthProvider: String = DEFAULT_AUTH_PROVIDER)
@@ -38,17 +39,27 @@ case class CassandraClientConfig(
 
 object CassandraClientConfig {
 
-  val DEFAULT_DATACENTER = "datacenter1"
-  val DEFAULT_REPLICATION = 1
+  val DEFAULT_DATACENTER:String = "datacenter1"
+  val DEFAULT_REPLICATION: Map[String, Integer] = HashMap("datacenter1"->new Integer(1))
   val DEFAULT_AUTH_PROVIDER = ""
   val DEFAULT_USERNAME = "cassandra"
   val DEFAULT_PASSWORD = "cassandra"
 
   def parse(config: Config): CassandraClientConfig = {
+    val replicationString = config.getString("replication")
+    val replicationInt = replicationString.toIntOption
+    def convertToReplicationMap(): Map[String, Integer] = {
+      if (replicationInt.isDefined){
+        HashMap(config.getString("dataCenter")-> new Integer(replicationInt.get))
+      } else {
+        replicationString.split(",").map(x=>x.split(":")).map(x=>(x(0).trim, new Integer(x(1).trim.toInt))).toMap[String, Integer]
+      }
+    }
+
     CassandraClientConfig(
       config.getString("contactPoints").split(",").map(_.split(":")).map(hp => (hp(0), Integer.parseInt(hp(1)))).toList,
       config.getString("dataCenter"),
-      config.getInt("replication"),
+      convertToReplicationMap(),
       config.getString("username"),
       config.getString("password"),
       config.getString("authProvider"))

@@ -57,7 +57,7 @@ object datamodelRepository {
       List(DefaultCassandraColumn(DATAMODEL_COLUMN, DataTypes.TEXT))
     ))
   }
-  def ensureRepoTableExists(keyspace: String, replication: Int, session: CqlSession, executor: ExecutionContext): Future[CassandraTable] = {
+  def ensureRepoTableExists(keyspace: String, replication: Map[String, Integer], session: CqlSession, executor: ExecutionContext): Future[CassandraTable] = {
     val table = repoTable(keyspace)
     val ensureKeyspace = cassandra.createKeyspaceAsync(session, keyspace, replication, executor)
     val ensureTable = ensureKeyspace.flatMap(_ => cassandra.createTableAsync(session, table))(executor)

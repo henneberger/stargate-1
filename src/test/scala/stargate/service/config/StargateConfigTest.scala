@@ -59,8 +59,17 @@ class StargateConfigTest {
      assertThat(cassConfig.cassandraAuthProvider, equalTo("PlainTextAuthProvider"))
      assertThat(cassConfig.cassandraUserName, equalTo("myuser"))
      assertThat(cassConfig.cassandraPassword, equalTo("mypass"))
-     assertThat(cassConfig.cassandraReplication, equalTo(7))
+     assertThat(cassConfig.cassandraReplication.getOrElse("mydc", new Integer(-1)), equalTo(new Integer(7)))
      assertThat(cassConfig.cassandraContactPoints, equalTo(List(("192.168.1.2", 9042),("192.168.1.3", 9042))))
      assertThat(cassConfig.cassandraDataCenter, equalTo("mydc"))
+  }
+
+  @Test
+  def testMultiDCParsesCorrectly(){
+    val config = ConfigFactory.parseResources("testsg-multidc.conf").resolve()
+    val sgMultiDcConfig = StargateConfig.parse(config)
+    val cassConfig = sgMultiDcConfig.cassandra
+    assertThat(cassConfig.cassandraReplication.getOrElse("mydc", new Integer(-1)), equalTo(new Integer(7)))
+    assertThat(cassConfig.cassandraReplication.getOrElse("mydc2", new Integer(-1)), equalTo(new Integer(5)))
   }
 }
