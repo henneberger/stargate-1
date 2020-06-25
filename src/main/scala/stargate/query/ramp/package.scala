@@ -34,16 +34,16 @@ package object ramp {
 
   type GetTransactionState = UUID => Future[TransactionState.Value]
   type SetTransactionState = (UUID, TransactionState.Value) => Future[Unit]
-  case class Context(model: OutputModel, getState: GetTransactionState, setState: SetTransactionState, session: CqlSession, nodeProbe: NodeProbe, executor: ExecutionContext, scheduler: ScheduledExecutorService) {
+  case class Context(model: OutputModel, getState: GetTransactionState, setState: SetTransactionState, session: CqlSession, executor: ExecutionContext, scheduler: ScheduledExecutorService) {
     val queryContext = query.Context(model, session, executor)
     val deleteCountByTable: Map[String, AtomicLong] = model.tables.map(t => (t.name, new AtomicLong(0))).toMap
   }
-  def createContext(model: OutputModel, session: CqlSession, nodeProbe: NodeProbe, executor: ExecutionContext): Context = {
+  def createContext(model: OutputModel, session: CqlSession, executor: ExecutionContext): Context = {
     val stateMap = new ConcurrentHashMap[UUID, TransactionState.Value]()
     def getState(id: UUID) = Future.successful(stateMap.get(id))
     def setState(id: UUID, state: TransactionState.Value) = Future.successful({ stateMap.put(id, state); () })
     val scheduler = Executors.newSingleThreadScheduledExecutor()
-    Context(model, getState, setState, session, nodeProbe, executor, scheduler)
+    Context(model, getState, setState, session, executor, scheduler)
   }
 
   type MutationResult = Future[Option[(List[Map[String,Object]], List[ramp.write.WriteOp])]]

@@ -16,7 +16,7 @@
 
 package stargate
 import java.nio.file.Paths
-import java.util.concurrent.{ConcurrentSkipListSet, TimeUnit}
+import java.util.concurrent.ConcurrentSkipListSet
 
 import com.datastax.oss.driver.api.core.CqlSession
 import com.typesafe.scalalogging.LazyLogging

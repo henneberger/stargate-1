@@ -26,7 +26,6 @@ import com.datastax.oss.driver.api.querybuilder.SchemaBuilder
 import com.datastax.oss.driver.api.querybuilder.schema.CreateTable
 import com.datastax.oss.driver.internal.core.util.Strings
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.cassandra.tools.NodeProbe
 import stargate.service.config.{CassandraClientConfig, StargateConfig}
 import stargate.util.AsyncList
 
@@ -250,17 +249,6 @@ object cassandra extends LazyLogging {
                 .withAuthProvider(authProvider).build
           }
       }
-  }
-
-  def nodeProbe(config: CassandraClientConfig): NodeProbe = {
-    val contacts: List[(String, Int)] = config.cassandraContactPoints
-    val (host, port) = contacts(0)
-    config.cassandraAuthProvider match {
-      //TODO figure out how to support custom auth/if it's possible?
-      case "PlainTextAuthProvider" => new NodeProbe(host, port, config.cassandraUserName, config.cassandraPassword)
-      case "" => new NodeProbe(host, port)
-      case _ => throw new RuntimeException(s"cannot create cassandra NodeProbe for auth provider ${config.cassandraAuthProvider}")
-    }
   }
 
   /**

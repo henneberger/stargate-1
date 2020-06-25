@@ -216,11 +216,6 @@
             <version>4.1.50.Final</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.cassandra</groupId>
-            <artifactId>cassandra-all</artifactId>
-            <version>3.11.6</version>
-        </dependency>
-        <dependency>
             <groupId>com.datastax.oss</groupId>
             <artifactId>java-driver-core</artifactId>
             <version>${cassandra.client.version}</version>
