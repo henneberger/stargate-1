@@ -147,7 +147,6 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
 
   def crudTest(model: OutputModel, crud: CRUD, executor: ExecutionContext): Unit = {
     implicit val ec: ExecutionContext = EntityCRUDTestTrait.executor
-    util.await(model.createTables(session, executor)).get
     model.input.entities.keys.foreach(entityName => {
       List.range(0, 20).foreach(_ => {
         val created = Await.result(createEntityWithIds(model, crud, entityName, executor), Duration.Inf)
@@ -182,6 +181,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
+    util.await(model.createTables(session, executor)).get
     val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
     crudTest(model, crud, executor)
   }
@@ -191,6 +191,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
+    util.await(model.createTables(session, executor)).get
     val crud = stargate.model.batchedCRUD(model, this.session, executor)
     crudTest(model, crud, executor)
   }
@@ -201,6 +202,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.rampOutputModel(inputModel, keyspace)
+    util.await(model.createRampTables(session, executor)).get
     val crud = stargate.model.rampCRUD(model, this.session, executor)
     crudTest(model, crud, executor)
   }

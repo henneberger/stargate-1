@@ -109,8 +109,10 @@ package object model {
     val baseTables: Map[String, CassandraTable] = entityTables.map(et => (et._1, et._2.find(t => t.name == schema.baseTableName(et._1)).get))
     def tables: List[CassandraTable] = (entityTables.values.flatten ++ relationTables.values).toList
     def createTables(session: CqlSession, executor: ExecutionContext): Future[Unit] = {
-      implicit val ec: ExecutionContext = executor
-      Future.sequence(this.tables.map(cassandra.createTableAsync(session, _))).map(_ => ())
+      util.sequence(this.tables.map(cassandra.createTableAsync(session, _)), executor).map(_ => ())(executor)
+    }
+    def createRampTables(session: CqlSession, executor: ExecutionContext): Future[Unit] = {
+      util.sequence(this.tables.map(cassandra.createRampTableAsync(session, _)), executor).map(_ => ())(executor)
     }
   }
 

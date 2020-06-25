@@ -179,13 +179,14 @@ object cassandra extends LazyLogging {
     * @param table represents the Apache Cassandra table that will be created
     * @return a SimpleStatement which can be passed to execute or executeAsync for execution
     */
-  def createTableStatement(table: CassandraTable): SimpleStatement = {
+  def createTableStatementBuilder(table: CassandraTable): CreateTable = {
     val base = SchemaBuilder.createTable(Strings.doubleQuote(table.keyspace), Strings.doubleQuote(table.name)).ifNotExists().asInstanceOf[CreateTable]
     val partitionKeys = table.columns.key.partitionKeys.foldLeft(base)((builder, next) => builder.withPartitionKey(Strings.doubleQuote(next.name), next.physicalType))
     val clusteringKeys = table.columns.key.clusteringKeys.foldLeft(partitionKeys)((builder, next) => builder.withClusteringColumn(Strings.doubleQuote(next.name), next.physicalType))
-    val dataCols = table.columns.data.foldLeft(clusteringKeys)((builder, next) => builder.withColumn(Strings.doubleQuote(next.name), next.`type`))
-    dataCols.build.setTimeout(schemaOpTimeout)
+    table.columns.data.foldLeft(clusteringKeys)((builder, next) => builder.withColumn(Strings.doubleQuote(next.name), next.`type`))
   }
+  def createTableStatement(table: CassandraTable): SimpleStatement = createTableStatementBuilder(table).build.setTimeout(schemaOpTimeout)
+  def createRampTableStatement(table: CassandraTable): SimpleStatement = createTableStatementBuilder(table).withGcGraceSeconds(0).build.setTimeout(schemaOpTimeout)
 
   /**
     * creates a new table but do so asynchronously
@@ -196,6 +197,9 @@ object cassandra extends LazyLogging {
     */
   def createTableAsync(session: CqlSession, table: CassandraTable): Future[AsyncResultSet] = {
     session.executeAsync(createTableStatement(table)).asScala
+  }
+  def createRampTableAsync(session: CqlSession, table: CassandraTable): Future[AsyncResultSet] = {
+    session.executeAsync(createRampTableStatement(table)).asScala
   }
 
   /**

@@ -26,7 +26,8 @@ class MergedCassandraTest
     with PaginationTestTrait
     with PredefinedQueryTestTrait
     with ReadWriteTestTrait
-  with NullKeysTestTrait {
+    with NullKeysTestTrait
+    with RampTestTrait {
 
   override def session: CqlSession = MergedCassandraTest.cqlSession
   override def newKeyspace(): String = MergedCassandraTest.newKeyspace()
