@@ -5,7 +5,6 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{ConcurrentHashMap, Executors, ScheduledExecutorService, TimeUnit}
 
 import com.datastax.oss.driver.api.core.CqlSession
-import org.apache.cassandra.tools.NodeProbe
 import stargate.model.queries._
 import stargate.model.{OutputModel, ScalarCondition}
 import stargate.query.ramp.read.{MaybeRead, MaybeReadRows}

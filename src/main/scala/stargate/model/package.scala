@@ -18,7 +18,6 @@ package stargate
 
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.`type`.{DataType, DataTypes}
-import org.apache.cassandra.tools.NodeProbe
 import stargate.cassandra.{CassandraColumn, CassandraTable, DefaultCassandraColumn}
 import stargate.model.queries.predefined.GetQuery
 import stargate.query.pagination
