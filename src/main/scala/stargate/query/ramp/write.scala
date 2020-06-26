@@ -8,6 +8,7 @@ import stargate.cassandra.CassandraTable
 import stargate.model.OutputModel
 import stargate.schema.{TRANSACTION_DELETED_COLUMN_NAME, TRANSACTION_ID_COLUMN_NAME}
 import stargate.{cassandra, query, schema}
+import stargate.util
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -45,17 +46,31 @@ object write {
     tables.map(table => CompareAndSetOp(table, deleteWrite, entity))
   }
 
-  def compareAndSet(table: CassandraTable, write: Map[String,Object], previous: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
-    implicit val ec: ExecutionContext = executor
-    for {
-      _ <- cassandra.executeAsync(session, query.write.insertStatement(table, write).build, executor)
-      rows <- cassandra.queryAsync(session, query.read.selectKeysStatement(table, previous.removed(TRANSACTION_ID_COLUMN_NAME)).build, executor).toList(executor)
-      latestTransactions = rows.takeRight(2).map(_.getUuid(Strings.doubleQuote(TRANSACTION_ID_COLUMN_NAME)))
-      success = latestTransactions == List(previous(TRANSACTION_ID_COLUMN_NAME), write(TRANSACTION_ID_COLUMN_NAME))
-      writes = List((table, write))
-      deleteCleanup = if(write.get(TRANSACTION_DELETED_COLUMN_NAME).contains(java.lang.Boolean.TRUE:Object)) List((table, write)) else List.empty
-      cleanup = List((table, previous)) ++ deleteCleanup
-    } yield WriteResult(success, writes, cleanup)
+  def compareAndSet(context: Context, table: CassandraTable, write: Map[String,Object], previous: Map[String,Object]): Future[WriteResult] = {
+    val (transactionId, previousId) = (write(schema.TRANSACTION_ID_COLUMN_NAME), previous(schema.TRANSACTION_ID_COLUMN_NAME))
+    val executor = context.executor
+    val writes = List((table, write))
+    def failedResult = Future.successful(WriteResult(false, writes, List.empty))
+    cassandra.executeAsync(context.session, query.write.insertStatement(table, write).build, executor).flatMap(_ => {
+      cassandra.queryAsync(context.session, query.read.selectKeysStatement(table, previous.removed(TRANSACTION_ID_COLUMN_NAME)).build, executor).toList(executor).flatMap(rows => {
+        val transactionIds = rows.reverse.map(_.getUuid(Strings.doubleQuote(TRANSACTION_ID_COLUMN_NAME)))
+        if(transactionIds.headOption.orNull == transactionId) {
+          val (conflicts, oldIds) = transactionIds.tail.span(_ != previousId)
+          if(oldIds.nonEmpty) {
+            util.sequence(conflicts.map(context.getState), executor).map(conflictingStates => {
+              val success = conflictingStates.forall(_ == TransactionState.FAILED)
+              val deleteCleanup = if(write.get(TRANSACTION_DELETED_COLUMN_NAME).contains(java.lang.Boolean.TRUE:Object)) List((table, write)) else List.empty
+              val cleanup = List((table, previous)) ++ deleteCleanup
+              WriteResult(success, writes, cleanup)
+            })(executor)
+          } else {
+            failedResult
+          }
+        } else {
+          failedResult
+        }
+      })(executor)
+    })(executor)
   }
 
   def insert(table: CassandraTable, write: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[WriteResult] = {
@@ -65,7 +80,7 @@ object write {
   def execute(context: Context, op: WriteOp): Future[WriteResult] = {
     op match {
       case InsertOp(table, data) => insert(table, data, context.session, context.executor)
-      case CompareAndSetOp(table, data, previous) => compareAndSet(table, data, previous, context.session, context.executor)
+      case CompareAndSetOp(table, data, previous) => compareAndSet(context, table, data, previous)
     }
   }
 

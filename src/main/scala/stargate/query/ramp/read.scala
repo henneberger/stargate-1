@@ -15,21 +15,23 @@ object read {
   type MaybeReadRows = MaybeRead[Map[String,Object]]
 
   def filterLastValidState(context: Context, before: UUID, states: List[Map[String,Object]]): MaybeReadRows = {
+    def firstValidState(states: List[Map[String,Object]]): MaybeReadRows = {
+      states.headOption.map(head => {
+        val transactionId = head(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID]
+        context.getState(transactionId).flatMap(status => {
+          def isDeleted = head.get(schema.TRANSACTION_DELETED_COLUMN_NAME).map(_.asInstanceOf[java.lang.Boolean]).getOrElse(java.lang.Boolean.FALSE)
+          if(status == TransactionState.SUCCESS) {
+            Future.successful(Some(if(isDeleted) List.empty else List(head)))
+          } else if(status == TransactionState.IN_PROGRESS) {
+            firstValidState(states.tail)
+          } else {
+            Future.successful(None)
+          }
+        })(context.executor)
+      }).getOrElse(Future.successful(Some(List.empty)))
+    }
     val beforeStates = states.reverse.dropWhile(_(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID].compareTo(before) >= 0)
-    beforeStates.headOption.map(head => {
-      val transactionId = head(schema.TRANSACTION_ID_COLUMN_NAME).asInstanceOf[UUID]
-      context.getState(transactionId).map(status => {
-        def isDeleted = head.get(schema.TRANSACTION_DELETED_COLUMN_NAME).map(_.asInstanceOf[java.lang.Boolean]).getOrElse(java.lang.Boolean.FALSE)
-        if(status == TransactionState.SUCCESS) {
-          if(isDeleted) {
-            Some(List.empty)
-          } else
-            Some(List(head))
-        } else {
-          None
-        }
-      })(context.executor)
-    }).getOrElse(Future.successful(Some(List.empty)))
+    firstValidState(beforeStates)
   }
 
   def flatten[T](maybeReads: AsyncList[MaybeRead[T]], executor: ExecutionContext): MaybeRead[T] = {
