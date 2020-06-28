@@ -1,10 +1,13 @@
 package stargate.query
 
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.{ConcurrentHashMap, Executors, ScheduledExecutorService, TimeUnit}
+import java.util.concurrent._
+import java.util.{Comparator, UUID}
 
-import com.datastax.oss.driver.api.core.CqlSession
+import com.datastax.oss.driver.api.core.servererrors.QueryConsistencyException
+import com.datastax.oss.driver.api.core.uuid.Uuids
+import com.datastax.oss.driver.api.core.{CqlSession, DefaultConsistencyLevel}
+import stargate.cassandra.CassandraTable
 import stargate.model.queries._
 import stargate.model.{OutputModel, ScalarCondition}
 import stargate.query.ramp.read.{MaybeRead, MaybeReadRows}
@@ -13,7 +16,6 @@ import stargate.schema.GroupedConditions
 import stargate.{cassandra, keywords, query, schema, util}
 
 import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Random
 
 package object ramp {
 
@@ -35,7 +37,11 @@ package object ramp {
   type SetTransactionState = (UUID, TransactionState.Value) => Future[Unit]
   case class Context(model: OutputModel, getState: GetTransactionState, setState: SetTransactionState, session: CqlSession, executor: ExecutionContext, scheduler: ScheduledExecutorService) {
     val queryContext = query.Context(model, session, executor)
-    val deleteCountByTable: Map[String, AtomicLong] = model.tables.map(t => (t.name, new AtomicLong(0))).toMap
+    type QueueEntry = (Long, Long, CassandraTable, Map[String,Object])
+    val comparator: Comparator[QueueEntry] = (a: QueueEntry, b: QueueEntry) => Ordering[(Long,Long)].compare((a._1, a._2), (b._1, b._2))
+    val deletionQueue: PriorityBlockingQueue[QueueEntry] = new PriorityBlockingQueue(11, comparator)
+    val deletionDelayMs: Long = 10000
+    val deleteCounter: AtomicLong = new AtomicLong(0)
   }
   def createContext(model: OutputModel, session: CqlSession, executor: ExecutionContext): Context = {
     val stateMap = new ConcurrentHashMap[UUID, TransactionState.Value]()
@@ -297,28 +303,44 @@ package object ramp {
     }
   }
 
+
+  def queueDeletion(context: Context, table: CassandraTable, row: Map[String, Object], delayMs: Long): Unit = {
+    context.deletionQueue.add((System.currentTimeMillis(), context.deleteCounter.getAndIncrement(), table, row))
+    def task(): Unit = {
+      val next = context.deletionQueue.poll()
+      val result = if(next != null) {
+        cassandra.executeAsync(context.session, query.write.deleteEntityStatement(table, row).build.setConsistencyLevel(DefaultConsistencyLevel.ALL), context.executor)
+      } else {
+        Future.successful(())
+      }
+      result.onComplete(result => {
+        if(result.isFailure) {
+          logger.warn("deletion failed", result.failed.get)
+          result.failed.get match {
+            case _: QueryConsistencyException => {
+              context.scheduler.schedule((() => task()): Callable[Unit], context.deletionDelayMs, TimeUnit.MILLISECONDS)
+            }
+            case _ => ()
+          }
+        } else {
+          // TODO: remove from in-flight deletes on success if deleting in parallel
+        }
+      })(context.executor)
+    }
+    context.scheduler.schedule((() => task()):Callable[Unit], delayMs, TimeUnit.MILLISECONDS)
+  }
   def executeMutation(context: Context, mutation: MutationResult): MaybeReadRows = {
     val executor = context.executor
     val result = mutation.map(_.map(entities_ops => {
       val (entities, writes) = entities_ops
       val writeResults = util.sequence(writes.map(write => ramp.write.execute(context, write)), executor)
-      writeResults.flatMap(writeResults => {
+      writeResults.map(writeResults => {
         if(writeResults.forall(_.success)) {
-          val cleanup = Executors.newScheduledThreadPool(1)
-          val cleanupRunnable: Runnable = () => {
-            writeResults.foreach(writeResult => {
-              writeResult.cleanup.foreach(cleanup => {
-                cassandra.executeAsync(context.session, query.write.deleteEntityStatement(cleanup._1, cleanup._2).build, executor)
-              })
-            })
-          }
-          cleanup.schedule(cleanupRunnable, 10, TimeUnit.SECONDS)
-          Future.successful(Some(entities))
+          writeResults.flatMap(_.cleanup).foreach(delete => queueDeletion(context, delete._1, delete._2, context.deletionDelayMs))
+          Some(entities)
         } else {
-          val doit = writeResults.flatMap(writeResult => {
-            writeResult.writes.map(write => cassandra.executeAsync(context.session, query.write.deleteEntityStatement(write._1, write._2).build, executor))
-          })
-          util.sequence(doit, executor).map(_ => None)(executor)
+          writeResults.flatMap(_.writes).foreach(delete => queueDeletion(context, delete._1, delete._2, 0))
+          None
         }
       })(executor)
     }))(executor)
@@ -328,7 +350,7 @@ package object ramp {
 
   def get(context: Context, entityName: String, payload: GetQuery): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
-      val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
+      val transactionId = Uuids.timeBased();
       get(context, transactionId, entityName, payload)
     }
     tryMutation.flatMap(result => result.map(rows => {
@@ -337,7 +359,7 @@ package object ramp {
   }
   def mutation(context: Context, entityName: String, payload: Mutation): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
-      val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
+      val transactionId = Uuids.timeBased();
       val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
       val dataWrites = inProgress.flatMap(_ => mutation(context, transactionId, entityName, payload))(context.executor)
       val writeResult = executeMutation(context, dataWrites)
@@ -353,7 +375,7 @@ package object ramp {
   }
   def delete(context: Context, entityName: String, payload: DeleteQuery): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
-      val transactionId = new UUID(System.currentTimeMillis(), Random.nextLong)
+      val transactionId = Uuids.timeBased();
       val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
       val dataWrites = inProgress.flatMap(_ => delete(context, transactionId, entityName, payload))(context.executor)
       val writeResult = executeMutation(context, dataWrites)
