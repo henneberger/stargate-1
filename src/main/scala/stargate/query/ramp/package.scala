@@ -1,11 +1,10 @@
 package stargate.query
 
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent._
+import java.util.concurrent.atomic.AtomicLong
 import java.util.{Comparator, UUID}
 
 import com.datastax.oss.driver.api.core.servererrors.QueryConsistencyException
-import com.datastax.oss.driver.api.core.uuid.Uuids
 import com.datastax.oss.driver.api.core.{CqlSession, DefaultConsistencyLevel}
 import stargate.cassandra.CassandraTable
 import stargate.model.queries._
@@ -16,9 +15,15 @@ import stargate.schema.GroupedConditions
 import stargate.{cassandra, keywords, query, schema, util}
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.jdk.CollectionConverters._
+import scala.util.Random
 
 package object ramp {
 
+  type TransactionId = java.util.List[java.lang.Long]
+  object TransactionIdOrdering extends Ordering[TransactionId] {
+    override def compare(x: TransactionId, y: TransactionId): Int = Ordering[Iterable[java.lang.Long]].compare(x.asScala, y.asScala)
+  }
   object TransactionState extends Enumeration {
     class Value(val name: String, val asInt: Int) extends super.Val(name)
     val IN_PROGRESS = new Value("IN_PROGRESS", 1)
@@ -33,8 +38,8 @@ package object ramp {
     def fromInt(int: Int): Value = ints(int)
   }
 
-  type GetTransactionState = UUID => Future[TransactionState.Value]
-  type SetTransactionState = (UUID, TransactionState.Value) => Future[Unit]
+  type GetTransactionState = TransactionId => Future[TransactionState.Value]
+  type SetTransactionState = (TransactionId, TransactionState.Value) => Future[Unit]
   case class Context(model: OutputModel, getState: GetTransactionState, setState: SetTransactionState, session: CqlSession, executor: ExecutionContext, scheduler: ScheduledExecutorService) {
     val queryContext = query.Context(model, session, executor)
     type QueueEntry = (Long, Long, CassandraTable, Map[String,Object])
@@ -44,9 +49,9 @@ package object ramp {
     val deleteCounter: AtomicLong = new AtomicLong(0)
   }
   def createContext(model: OutputModel, session: CqlSession, executor: ExecutionContext): Context = {
-    val stateMap = new ConcurrentHashMap[UUID, TransactionState.Value]()
-    def getState(id: UUID) = Future.successful(stateMap.get(id))
-    def setState(id: UUID, state: TransactionState.Value) = Future.successful({ stateMap.put(id, state); () })
+    val stateMap = new ConcurrentHashMap[TransactionId, TransactionState.Value]()
+    def getState(id: TransactionId) = Future.successful(stateMap.get(id))
+    def setState(id: TransactionId, state: TransactionState.Value) = Future.successful({ stateMap.put(id, state); () })
     val scheduler = Executors.newSingleThreadScheduledExecutor()
     Context(model, getState, setState, session, executor, scheduler)
   }
@@ -65,13 +70,13 @@ package object ramp {
     addResponseMetadata(result, Map((key, value)), executor)
   }
 
-  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: List[ScalarCondition[Object]]): MaybeReadRows = {
+  def matchEntities(context: Context, transactionId: TransactionId, entityName: String, conditions: List[ScalarCondition[Object]]): MaybeReadRows = {
     val executor = context.executor
     val potentialIds = query.matchEntities(context.queryContext, entityName, conditions).dedupe(executor)
     val potentialEntities = potentialIds.map(id => ramp.read.entityIdToLastValidState(context, transactionId, entityName, id), executor)
     ramp.read.flatten(potentialEntities, executor).map(_.map(_.filter(query.read.checkConditions(_, conditions))))(executor)
   }
-  def matchEntities(context: Context, transactionId: UUID, entityName: String, conditions: GroupedConditions[Object]): MaybeRead[UUID] = {
+  def matchEntities(context: Context, transactionId: TransactionId, entityName: String, conditions: GroupedConditions[Object]): MaybeRead[UUID] = {
     val groupedEntities = conditions.toList.map(path_conds => {
       val (path, conditions) = path_conds
       val targetEntityName = schema.traverseEntityPath(context.model.input.entities, entityName, path)
@@ -83,7 +88,7 @@ package object ramp {
 
 
 
-  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: MaybeRead[UUID]): MaybeRead[UUID] = {
+  def resolveRelations(context: Context, transactionId: TransactionId, entityName: String, relationPath: List[String], ids: MaybeRead[UUID]): MaybeRead[UUID] = {
     if(relationPath.isEmpty) {
       ids
     } else {
@@ -92,10 +97,10 @@ package object ramp {
       resolveRelations(context, transactionId, context.model.input.entities(entityName).relations(relationName).targetEntityName, relationPath.tail, next)
     }
   }
-  def resolveRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): MaybeRead[UUID] = {
+  def resolveRelations(context: Context, transactionId: TransactionId, entityName: String, relationPath: List[String], ids: List[UUID]): MaybeRead[UUID] = {
     resolveRelations(context, transactionId, entityName, relationPath, Future.successful(Some(ids)))
   }
-  def resolveReverseRelations(context: Context, transactionId: UUID, rootEntityName: String, relationPath: List[String], relatedIds: MaybeRead[UUID]): MaybeRead[UUID] = {
+  def resolveReverseRelations(context: Context, transactionId: TransactionId, rootEntityName: String, relationPath: List[String], relatedIds: MaybeRead[UUID]): MaybeRead[UUID] = {
     if(relationPath.isEmpty) {
       relatedIds
     } else {
@@ -105,12 +110,12 @@ package object ramp {
       resolveRelations(context, transactionId, newRootEntityName, inversePath, relatedIds)
     }
   }
-  def resolveReverseRelations(context: Context, transactionId: UUID, entityName: String, relationPath: List[String], ids: List[UUID]): MaybeRead[UUID] = {
+  def resolveReverseRelations(context: Context, transactionId: TransactionId, entityName: String, relationPath: List[String], ids: List[UUID]): MaybeRead[UUID] = {
     resolveReverseRelations(context, transactionId, entityName, relationPath, Future.successful(Some(ids)))
   }
 
 
-  def getEntitiesAndRelated(context: Context, transactionId: UUID, entityName: String, ids: MaybeRead[UUID], payload: GetSelection): MaybeReadRows = {
+  def getEntitiesAndRelated(context: Context, transactionId: TransactionId, entityName: String, ids: MaybeRead[UUID], payload: GetSelection): MaybeReadRows = {
     val executor = context.executor
     val relations = context.model.input.entities(entityName).relations
     val results = ids.map(_.map(_.map(id => {
@@ -129,22 +134,22 @@ package object ramp {
     })))(executor)
     util.flattenFOLFOL(results, executor)
   }
-  def get(context: Context, transactionId: UUID, entityName: String, payload: GetQuery): MaybeReadRows = {
+  def get(context: Context, transactionId: TransactionId, entityName: String, payload: GetQuery): MaybeReadRows = {
     val ids = matchEntities(context, transactionId, entityName, payload.`match`)
     getEntitiesAndRelated(context, transactionId, entityName, ids, payload.selection)
   }
 
 
 
-  def relationLink(model: OutputModel, transactionId: UUID, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
+  def relationLink(model: OutputModel, transactionId: TransactionId, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
     payload.flatMap(entity => ramp.write.createBidirectionalRelation(model, transactionId, entityName, relationName, parentId, entity(schema.ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID]))
   }
-  def relationUnlink(model: OutputModel, transactionId: UUID, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
+  def relationUnlink(model: OutputModel, transactionId: TransactionId, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
     def ids(entity: Map[String,Object]): Map[String,Object] = Map((schema.RELATION_FROM_COLUMN_NAME, parentId), (schema.RELATION_TO_COLUMN_NAME, entity(schema.ENTITY_ID_COLUMN_NAME)), (schema.TRANSACTION_ID_COLUMN_NAME, entity(schema.TRANSACTION_ID_COLUMN_NAME)))
     payload.flatMap(entity => ramp.write.deleteBidirectionalRelation(model, transactionId, entityName, relationName, ids(entity)))
   }
   // payload is a list of entities wrapped in link or unlink.  perform whichever link operation is specified between parent ids and child ids
-  def relationChange(model: OutputModel, transactionId: UUID, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
+  def relationChange(model: OutputModel, transactionId: TransactionId, entityName: String, parentId: UUID, relationName: String, payload: List[Map[String,Object]]): List[WriteOp] = {
     val byOperation = payload.groupBy(_(keywords.response.RELATION))
     val linked = byOperation.get(keywords.response.RELATION_LINK).map(relationLink(model, transactionId, entityName, parentId, relationName, _)).getOrElse(List.empty)
     val unlinked = byOperation.get(keywords.response.RELATION_UNLINK).map(relationUnlink(model, transactionId, entityName, parentId, relationName, _)).getOrElse(List.empty)
@@ -152,7 +157,7 @@ package object ramp {
   }
 
   // perform nested mutation, then take result (child entities wrapped in either link/unlink/replace) and update relations to parent ids
-  def mutateAndLinkRelations(context: Context, transactionId: UUID, entityName: String, entityId: UUID, payloadMap: Map[String,RelationMutation]): MutationResult = {
+  def mutateAndLinkRelations(context: Context, transactionId: TransactionId, entityName: String, entityId: UUID, payloadMap: Map[String,RelationMutation]): MutationResult = {
     implicit val executor: ExecutionContext = context.executor
     val entity = context.model.input.entities(entityName)
     val relationMutationResults = payloadMap.toList.map(name_mutation => {
@@ -171,7 +176,7 @@ package object ramp {
     relationLinkResults
   }
 
-  def createOne(context: Context, transactionId: UUID, entityName: String, payload: CreateOneMutation): MutationResult = {
+  def createOne(context: Context, transactionId: TransactionId, entityName: String, payload: CreateOneMutation): MutationResult = {
     val (uuid, creates) = ramp.write.createEntity(context.model.entityTables(entityName), payload.fields.updated(schema.TRANSACTION_ID_COLUMN_NAME, transactionId))
     val linkWrapped = payload.relations.map((rm: (String,Mutation)) => (rm._1, LinkMutation(rm._2)))
     val linkResults = mutateAndLinkRelations(context, transactionId, entityName, uuid, linkWrapped)
@@ -179,17 +184,17 @@ package object ramp {
     addResponseMetadata(createResult, keywords.response.ACTION, keywords.response.ACTION_CREATE, context.executor)
   }
 
-  def create(context: Context, transactionId: UUID, entityName: String, payload: CreateMutation): MutationResult = {
+  def create(context: Context, transactionId: TransactionId, entityName: String, payload: CreateMutation): MutationResult = {
     val creates = payload.creates.map(createOne(context, transactionId, entityName, _))
     util.sequence(creates, context.executor).map(lists => util.allDefined(lists).map(data_ops => (data_ops.flatMap(_._1), data_ops.flatMap(_._2))))(context.executor)
   }
 
-  def matchMutation(context: Context, transactionId: UUID, entityName: String, payload: MatchMutation): MutationResult = {
+  def matchMutation(context: Context, transactionId: TransactionId, entityName: String, payload: MatchMutation): MutationResult = {
     val ids = matchEntities(context, transactionId, entityName, payload.`match`)
     ids.map(_.map(ids => (ids.map(id => query.write.entityIdPayload(id).updated(keywords.response.ACTION, keywords.response.ACTION_UPDATE)), List.empty)))(context.executor)
   }
 
-  def update(context: Context, transactionId: UUID, entityName: String, ids: MaybeRead[UUID], payload: UpdateMutation): MutationResult = {
+  def update(context: Context, transactionId: TransactionId, entityName: String, ids: MaybeRead[UUID], payload: UpdateMutation): MutationResult = {
     val executor = context.executor
     val updateAll = ids.map(_.map(_.map( id => {
       val state = ramp.read.entityIdToLastValidState(context, transactionId, entityName, id)
@@ -206,13 +211,13 @@ package object ramp {
       (flat.flatMap(_._1), flat.flatMap(_._2))
     }))(executor)
   }
-  def update(context: Context, transactionId: UUID, entityName: String, payload: UpdateMutation): MutationResult = {
+  def update(context: Context, transactionId: TransactionId, entityName: String, payload: UpdateMutation): MutationResult = {
     val ids = matchEntities(context, transactionId, entityName, payload.`match`)
     val result = update(context, transactionId, entityName, ids, payload)
     addResponseMetadata(result, keywords.response.ACTION, keywords.response.ACTION_UPDATE, context.executor)
   }
 
-  def delete(context: Context, transactionId: UUID, entityName: String, ids: MaybeRead[UUID], payload: DeleteSelection): MutationResult = {
+  def delete(context: Context, transactionId: TransactionId, entityName: String, ids: MaybeRead[UUID], payload: DeleteSelection): MutationResult = {
     implicit val executor: ExecutionContext = context.executor
     val relations = context.model.input.entities(entityName).relations
     val result = ids.map(_.map(ids => ids.map(id => {
@@ -242,7 +247,7 @@ package object ramp {
     util.flattenFOLFO(result, executor).map(_.map(lists => (lists.flatMap(_.map(_._1)), lists.flatMap(_.flatMap(_._2)))))
   }
 
-  def delete(context: Context, transactionId: UUID, entityName: String, payload: DeleteQuery): MutationResult = {
+  def delete(context: Context, transactionId: TransactionId, entityName: String, payload: DeleteQuery): MutationResult = {
     val ids = matchEntities(context, transactionId, entityName, payload.`match`)
     val result = delete(context, transactionId, entityName, ids, payload.selection)
     addResponseMetadata(result, keywords.response.ACTION, keywords.response.ACTION_DELETE, context.executor)
@@ -250,7 +255,7 @@ package object ramp {
 
 
 
-  def mutation(context: Context, transactionId: UUID, entityName: String, payload: Mutation): MutationResult = {
+  def mutation(context: Context, transactionId: TransactionId, entityName: String, payload: Mutation): MutationResult = {
     payload match {
       case createReq: CreateMutation => create(context, transactionId, entityName, createReq)
       case `match`: MatchMutation => matchMutation(context, transactionId, entityName, `match`)
@@ -264,11 +269,11 @@ package object ramp {
       (keywords.response.ACTION, keywords.response.ACTION_UPDATE),
       (keywords.response.RELATION, keywords.response.RELATION_UNLINK))
   }
-  def linkMutation(context: Context, transactionId: UUID, entityName: String, payload: Mutation): MutationResult = {
+  def linkMutation(context: Context, transactionId: TransactionId, entityName: String, payload: Mutation): MutationResult = {
     val result = mutation(context, transactionId, entityName, payload)
     addResponseMetadata(result, keywords.response.RELATION, keywords.response.RELATION_LINK, context.executor)
   }
-  def unlinkMutation(context: Context, transactionId: UUID, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, `match`: GroupedConditions[Object]): MutationResult = {
+  def unlinkMutation(context: Context, transactionId: TransactionId, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, `match`: GroupedConditions[Object]): MutationResult = {
     val matchIds = matchEntities(context, transactionId, entityName, `match`)
     val relations = ramp.read.resolveRelation(context, transactionId, parentEntityName, List(parentId), parentRelation)
     val result = relations.map(_.map(relations => {
@@ -280,7 +285,7 @@ package object ramp {
     }))(context.executor)
     util.flattenFOFO(result, context.executor)
   }
-  def replaceMutation(context: Context, transactionId: UUID, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: Mutation): MutationResult = {
+  def replaceMutation(context: Context, transactionId: TransactionId, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: Mutation): MutationResult = {
     val linkMutationResult = mutation(context, transactionId, entityName, payload)
     val result = linkMutationResult.map(_.map(linked_statements => {
       val (mutationObjects, mutationStatements) = linked_statements
@@ -295,7 +300,7 @@ package object ramp {
     }))(context.executor)
     util.flattenFOFO(result, context.executor)
   }
-  def relationMutation(context: Context, transactionId: UUID, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: RelationMutation): MutationResult = {
+  def relationMutation(context: Context, transactionId: TransactionId, parentEntityName: String, parentId: UUID, parentRelation: String, entityName: String, payload: RelationMutation): MutationResult = {
     payload match {
       case link: LinkMutation => linkMutation(context, transactionId, entityName, link.mutation)
       case unlink: UnlinkMutation => unlinkMutation(context, transactionId, parentEntityName, parentId, parentRelation, entityName, unlink.`match`)
@@ -348,9 +353,12 @@ package object ramp {
   }
 
 
+  def newTransactionId: TransactionId = {
+    java.util.Arrays.asList(System.currentTimeMillis(), Random.nextLong)
+  }
   def get(context: Context, entityName: String, payload: GetQuery): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
-      val transactionId = Uuids.timeBased();
+      val transactionId = newTransactionId
       get(context, transactionId, entityName, payload)
     }
     tryMutation.flatMap(result => result.map(rows => {
@@ -359,7 +367,7 @@ package object ramp {
   }
   def mutation(context: Context, entityName: String, payload: Mutation): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
-      val transactionId = Uuids.timeBased();
+      val transactionId = newTransactionId
       val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
       val dataWrites = inProgress.flatMap(_ => mutation(context, transactionId, entityName, payload))(context.executor)
       val writeResult = executeMutation(context, dataWrites)
@@ -375,7 +383,7 @@ package object ramp {
   }
   def delete(context: Context, entityName: String, payload: DeleteQuery): MaybeReadRows = {
     def tryMutation: MaybeReadRows = {
-      val transactionId = Uuids.timeBased();
+      val transactionId = newTransactionId
       val inProgress = context.setState(transactionId, TransactionState.IN_PROGRESS)
       val dataWrites = inProgress.flatMap(_ => delete(context, transactionId, entityName, payload))(context.executor)
       val writeResult = executeMutation(context, dataWrites)

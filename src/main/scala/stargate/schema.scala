@@ -34,7 +34,7 @@ object schema {
   val RELATION_JOIN_STRING = "."
   val RELATION_SPLIT_REGEX = "\\."
 
-  val transactionIdColumn = DefaultCassandraColumn(TRANSACTION_ID_COLUMN_NAME, DataTypes.UUID)
+  val transactionIdColumn = DefaultCassandraColumn(TRANSACTION_ID_COLUMN_NAME, DataTypes.frozenListOf(DataTypes.BIGINT))
   def baseTableName(entityName: String) = entityName
   val baseTableKey = CassandraKey(List(DefaultCassandraColumn(ENTITY_ID_COLUMN_NAME, DataTypes.UUID)), List.empty)
   def viewTableName(entityName: String, key: CassandraKeyNames) = entityName + "_" + key.partitionKeys.mkString("_") + "_" + key.clusteringKeys.mkString("_")
@@ -54,7 +54,7 @@ object schema {
   }
 
   def rampTable(table: CassandraTable): CassandraTable = {
-    val key = CassandraKey(table.columns.key.partitionKeys, table.columns.key.clusteringKeys ++ List(DefaultCassandraColumn(TRANSACTION_ID_COLUMN_NAME, DataTypes.UUID)))
+    val key = CassandraKey(table.columns.key.partitionKeys, table.columns.key.clusteringKeys ++ List(transactionIdColumn))
     val data = table.columns.data ++ List(DefaultCassandraColumn(TRANSACTION_DELETED_COLUMN_NAME, DataTypes.BOOLEAN))
     CassandraTable(table.keyspace, table.name, CassandraColumns(key, data))
   }

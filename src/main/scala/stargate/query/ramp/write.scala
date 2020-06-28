@@ -41,7 +41,7 @@ object write {
       }
     })
   }
-  def deleteEntity(tables: List[CassandraTable], transactionId: UUID, entity: Map[String,Object]): List[WriteOp] = {
+  def deleteEntity(tables: List[CassandraTable], transactionId: TransactionId, entity: Map[String,Object]): List[WriteOp] = {
     val deleteWrite = entity ++ Map((schema.TRANSACTION_ID_COLUMN_NAME, transactionId), (schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE))
     tables.map(table => CompareAndSetOp(table, deleteWrite, entity))
   }
@@ -53,7 +53,7 @@ object write {
     def failedResult = Future.successful(WriteResult(false, writes, List.empty))
     cassandra.executeAsync(context.session, query.write.insertStatement(table, write).build, executor).flatMap(_ => {
       cassandra.queryAsync(context.session, query.read.selectKeysStatement(table, previous.removed(TRANSACTION_ID_COLUMN_NAME)).build, executor).toList(executor).flatMap(rows => {
-        val transactionIds = rows.reverse.map(_.getUuid(Strings.doubleQuote(TRANSACTION_ID_COLUMN_NAME)))
+        val transactionIds = rows.reverse.map(_.getList(Strings.doubleQuote(TRANSACTION_ID_COLUMN_NAME), classOf[java.lang.Long]))
         if(transactionIds.headOption.orNull == transactionId) {
           val (conflicts, oldIds) = transactionIds.tail.span(_ != previousId)
           if(oldIds.nonEmpty) {
@@ -86,7 +86,7 @@ object write {
 
 
   def relationColumnValues(from: UUID, to: UUID): Map[String, UUID] = Map((schema.RELATION_FROM_COLUMN_NAME, from),(schema.RELATION_TO_COLUMN_NAME, to))
-  def updateBidirectionalRelation(statement: (CassandraTable,UUID,Map[String,Object]) => WriteOp, model: OutputModel, transactionId: UUID, fromEntity: String, fromRelationName: String, ids: Map[String,Object]): List[WriteOp] = {
+  def updateBidirectionalRelation(statement: (CassandraTable,TransactionId,Map[String,Object]) => WriteOp, model: OutputModel, transactionId: TransactionId, fromEntity: String, fromRelationName: String, ids: Map[String,Object]): List[WriteOp] = {
     val fromRelation =  model.input.entities(fromEntity).relations(fromRelationName)
     val toEntity = fromRelation.targetEntityName
     val toRelationName = fromRelation.inverseName
@@ -95,14 +95,14 @@ object write {
     val inverseIds = ids.updated(schema.RELATION_FROM_COLUMN_NAME, ids(schema.RELATION_TO_COLUMN_NAME)).updated(schema.RELATION_TO_COLUMN_NAME, ids(schema.RELATION_FROM_COLUMN_NAME))
     List(statement(fromTable, transactionId, ids), statement(toTable, transactionId, inverseIds))
   }
-  def createBidirectionalRelation(model: OutputModel, transactionId: UUID, fromEntity: String, fromRelationName: String, fromId: UUID, toId: UUID): List[WriteOp] = {
-    def create(table: CassandraTable, transactionId: UUID, ids: Map[String,Object]): InsertOp = {
+  def createBidirectionalRelation(model: OutputModel, transactionId: TransactionId, fromEntity: String, fromRelationName: String, fromId: UUID, toId: UUID): List[WriteOp] = {
+    def create(table: CassandraTable, transactionId: TransactionId, ids: Map[String,Object]): InsertOp = {
       InsertOp(table, ids.updated(schema.TRANSACTION_ID_COLUMN_NAME, transactionId))
     }
     updateBidirectionalRelation(create, model, transactionId, fromEntity, fromRelationName, relationColumnValues(fromId, toId))
   }
-  def deleteBidirectionalRelation(model: OutputModel, transactionId: UUID, fromEntity: String, fromRelationName: String, row: Map[String,Object]): List[WriteOp] = {
-    def delete(table: CassandraTable, transactionId: UUID, ids: Map[String,Object]): CompareAndSetOp = {
+  def deleteBidirectionalRelation(model: OutputModel, transactionId: TransactionId, fromEntity: String, fromRelationName: String, row: Map[String,Object]): List[WriteOp] = {
+    def delete(table: CassandraTable, transactionId: TransactionId, ids: Map[String,Object]): CompareAndSetOp = {
       val deleteRow = ids.updated(schema.TRANSACTION_ID_COLUMN_NAME, transactionId).updated(schema.TRANSACTION_DELETED_COLUMN_NAME, java.lang.Boolean.TRUE)
       CompareAndSetOp(table, deleteRow, ids)
     }
