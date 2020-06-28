@@ -2,7 +2,7 @@ package stargate.query.ramp
 
 import java.util.UUID
 
-import stargate.cassandra.{CassandraKey, CassandraTable}
+import stargate.cassandra.CassandraKey
 import stargate.model.{ScalarComparison, ScalarCondition}
 import stargate.util.AsyncList
 import stargate.{cassandra, query, schema}
@@ -22,7 +22,7 @@ object read {
           def isDeleted = head.get(schema.TRANSACTION_DELETED_COLUMN_NAME).map(_.asInstanceOf[java.lang.Boolean]).getOrElse(java.lang.Boolean.FALSE)
           if(status == TransactionState.SUCCESS) {
             Future.successful(Some(if(isDeleted) List.empty else List(head)))
-          } else if(status == TransactionState.IN_PROGRESS) {
+          } else if(status == TransactionState.FAILED) {
             firstValidState(states.tail)
           } else {
             Future.successful(None)
