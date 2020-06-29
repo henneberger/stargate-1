@@ -25,10 +25,10 @@ import (
 
 // StartServiceOptions defines the input of Client.Start
 type StartServiceOptions struct {
-	CassandraURL          string
-	ExposedPorts          []string
-	DockerImageHost       string
-	ImageName             string
+	CassandraURL         string
+	ExposedPorts         []string
+	DockerImageHost      string
+	ImageName            string
 	ServiceContainerName string
 	ServiceNetworkName   string
 }

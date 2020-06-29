@@ -33,6 +33,10 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 import scala.jdk.FutureConverters._
 import scala.jdk.CollectionConverters._
+import com.datastax.oss.driver.internal.core.ssl.DefaultSslEngineFactory
+import com.datastax.oss.driver.api.core.ssl.ProgrammaticSslEngineFactory
+import com.datastax.oss.driver.api.core.ssl.SslEngineFactory
+import io.netty.handler.ssl.JdkSslContext
 
 /**
   * provides most of the cassandra query methods and schema modification support
@@ -226,6 +230,7 @@ object cassandra extends LazyLogging {
   def session(config: CassandraClientConfig): CqlSession = {
       val contacts: List[(String, Int)] = config.cassandraContactPoints
       val dataCenter: String = config.cassandraDataCenter
+      var builder = sessionBuilder(contacts, dataCenter)
       config.cassandraAuthProvider match {
           //TODO add support for authorization-id when we have newer driver version
           case "PlainTextAuthProvider" => {

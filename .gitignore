@@ -33,6 +33,7 @@ buildNumber.properties
 #metal lsp server
 .bloop
 .metals
+.factorypath
 
 #vscode
 .vscode

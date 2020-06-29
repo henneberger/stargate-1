@@ -32,6 +32,16 @@ import javax.servlet.DispatcherType
 import java.{util => ju}
 import org.eclipse.jetty.servlet.FilterHolder
 import stargate.service.security.BasicAuthFilter
+import java.io.File
+import org.eclipse.jetty.util.ssl.SslContextFactory
+import org.eclipse.jetty.server.SecureRequestCustomizer
+import org.eclipse.jetty.server.HttpConfiguration
+import org.eclipse.jetty.http2.HTTP2Cipher
+import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory
+import org.eclipse.jetty.server.SslConnectionFactory
+import org.eclipse.jetty.server.HttpConnectionFactory
+import org.eclipse.jetty.server.ServerConnector
+import org.eclipse.jetty.alpn.server.ALPNServerConnectionFactory
 
 package object service {
   private val logger = Logger("stargage.service")
@@ -75,6 +85,36 @@ package object service {
   var registeredJettyMetrics = false
   var stats: StatisticsHandler = _
 
+  def addSsl(server: Server, port: Int, keyStore: String, keyStorePass: String){
+        // HTTP Configuration
+        val httpConfig: HttpConfiguration = new HttpConfiguration()
+        httpConfig.setSendServerVersion(false)
+        httpConfig.setSecureScheme("https")
+        httpConfig.setSecurePort(port)
+
+        // SSL Context Factory for HTTPS and HTTP/2
+        val sslContextFactory: SslContextFactory = new SslContextFactory()
+        sslContextFactory.setKeyStorePath(keyStore) 
+        sslContextFactory.setKeyStorePassword(keyStorePass)
+        sslContextFactory.setCipherComparator(HTTP2Cipher.COMPARATOR)
+
+        // HTTPS Configuration
+        val httpsConfig: HttpConfiguration = new HttpConfiguration(httpConfig)
+        httpsConfig.addCustomizer(new SecureRequestCustomizer())
+
+        // HTTP/2 Connection Factory
+        val h2: HTTP2ServerConnectionFactory = new HTTP2ServerConnectionFactory(httpsConfig)
+        val alpn: ALPNServerConnectionFactory = new ALPNServerConnectionFactory()
+        alpn.setDefaultProtocol("h2")
+
+        // SSL Connection Factory
+        val ssl: SslConnectionFactory = new SslConnectionFactory(sslContextFactory, alpn.getProtocol())
+
+        // HTTP/2 Connector
+        val http2Connector: ServerConnector = new ServerConnector(server, ssl, alpn, h2, new HttpConnectionFactory(httpsConfig))
+        http2Connector.setPort(port)
+        server.addConnector(http2Connector)
+  }
   /**
     * strictly in here for testing
     */
@@ -84,7 +124,14 @@ package object service {
     val executor = ExecutionContext.global
     val datamodelRepoTable: cassandra.CassandraTable = datamodelRepository.createDatamodelRepoTable(sgConfig, cqlSession, executor)
     val namespaces = new Namespaces(datamodelRepoTable, cqlSession)
-    val server = new Server(sgConfig.httpPort)
+    var server: Server = null
+    //val server = new Server(sgConfig.httpPort)
+    if (sgConfig.auth.getSsl()){
+      server = new Server();
+      addSsl(server, sgConfig.getHttpPort(), sgConfig.auth.getSslCert(), sgConfig.auth.getSslPass())
+    } else {
+      server = new Server(sgConfig.getHttpPort())
+    }
     val context = new WebAppContext()
     context setContextPath "/"
     context.setResourceBase("src/main/webapp")

@@ -15,17 +15,20 @@
  */
 package stargate.service
 
+import org.hamcrest.CoreMatchers._
 import org.junit.{AfterClass, BeforeClass}
-import stargate.CassandraTest
-import stargate.service.config.StargateConfig
+import org.junit.Test
+import org.junit.Assert._
 import stargate.service.testsupport._
-
-import scala.io.Source
+import stargate.service.config.StargateConfig
+import stargate.CassandraTest
 import scala.util.Random
+import org.junit.Before
 
-object MergedServletTest extends CassandraTest {
+object SslTest extends CassandraTest {
   var sc: ServletContext = _
   val rand: Random = new Random()
+
   @BeforeClass
   def startup() = {
     this.init()
@@ -33,9 +36,8 @@ object MergedServletTest extends CassandraTest {
     val systemKeyspace = this.newKeyspace()
     val clientConfig = this.clientConfig
     val authEnabled = false
-    sc = startServlet(9090, false, logger, systemKeyspace, rand, namespace, this.clientConfig)
+    sc = startServlet(9092, false, logger, systemKeyspace, rand, namespace, this.clientConfig, true)
   }
-  
 
   @AfterClass
   def shutdown() = {
@@ -45,6 +47,22 @@ object MergedServletTest extends CassandraTest {
   }
 }
 
-class MergedServletTest extends QueryServletTest with StargateServletTest with SwaggerServletTest {
+class SslTest extends HttpClientTestTrait {
 
-  override def registerKeyspace(keyspace: String): String = MergedServletTest.registerKeyspace(keyspace) }
+  @Before
+  def setup(){
+    sc = SslTest.sc
+  }
+
+  @Test
+  def testSwaggerEntityHtmlRenders(): Unit = {
+    if (sc == null){
+      throw new RuntimeException("servlet context never set by test")
+    }
+    val r = httpGet(wrapSSL(s"api-docs/${sc.namespace}/swagger"), "text/html", "")
+    assertEquals(200, r.statusCode)
+    assertTrue(r.contentType.isDefined)
+    assertEquals(s"text/html;charset=utf-8", r.contentType.get)
+    assertThat("cannot find swagger url", r.body.get, containsString(s"${sc.namespace}/swagger.json"))
+  }
+}

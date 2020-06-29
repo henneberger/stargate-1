@@ -15,33 +15,25 @@
 package cmd
 
 import (
-	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-//validateCmd validates the hocon file against the specified stargate server
-var validateCmd = &cobra.Command{
-	Short:   "Validate schema",
-	Long:    `Validate schema`,
-	Use:     "validate path [host]",
-	Example: "stargate validate ./todo.conf http://server.stargate.com:8080",
-	Args:    cobra.MinimumNArgs(1),
+//versionCmd outputs current command version
+var versionCmd = &cobra.Command{
+	Short:   "Version output",
+	Long:    `Full version of stargate command`,
+	Use:     "version",
+	Example: "stargate version",
+	Args:    cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		path := args[0]
-		var url string
-		if len(args) == 2 {
-			url = args[1]
-		}
-		err := Apply(cmd, "validate", path, url)
-		if err != nil {
-			cmd.PrintErrln(err)
-			os.Exit(1)
-		}
-		cmd.Println("No errors found! 🎉")
+		//this is a bit of a hack atm, should be decoupling this for the future
+		cleanedVersion := strings.ReplaceAll(defaultServiceVersion, "v", "")
+		cmd.Printf("stargate version: %s\n", cleanedVersion)
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(versionCmd)
 }

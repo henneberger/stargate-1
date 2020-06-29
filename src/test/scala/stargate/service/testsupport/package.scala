@@ -35,11 +35,33 @@ import java.net.http.HttpResponse.BodyHandlers
 import scala.io.Source
 import java.{util => ju}
 import at.favre.lib.crypto.bcrypt.BCrypt
+import java.nio.file.Paths
+import javax.net.ssl.X509TrustManager
+import javax.net.ssl.SSLContext
+import java.security.cert.X509Certificate
+import java.security.SecureRandom
+import javax.net.ssl.TrustManager
 
 /**
  * provides test aide support
  */
 package object testsupport {
+  class AllowAll extends X509TrustManager {
+    override def checkClientTrusted(x: Array[X509Certificate], s: String): Unit = {}
+
+    override def checkServerTrusted(x: Array[X509Certificate], s: String): Unit = {}
+
+    override def getAcceptedIssuers(): Array[X509Certificate] = {
+      return null
+    }
+
+  }
+  val trustAllCerts = Array[TrustManager](new AllowAll())
+
+  val sslContext = SSLContext.getInstance("TLS")
+  sslContext.init(null, trustAllCerts, new SecureRandom())
+  val props = System.getProperties(); 
+  props.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true")
 
   /**
    * for help with testing
@@ -54,7 +76,7 @@ package object testsupport {
     rand: Random,
     sgConfig: StargateConfig,
     shutdown: ()=> Unit,
-  )
+    )
 
   /**
    * simple response object for http, dont' have to work with the full scale of HttpResponse or a
@@ -71,41 +93,46 @@ package object testsupport {
   )
 
   /**
-    * creates a based64 encoded auth header string
-    *
-    * @param userName
-    * @param password
-    * @return
-    */
+   * creates a based64 encoded auth header string
+   *
+   * @param userName
+   * @param password
+   * @return
+   */
   def makeBasicAuthHeader(username: String, password: String): String = {
     val encoded = ju.Base64.getEncoder().encodeToString((s"$username:$password").getBytes("UTF-8"))
     s"Basic $encoded"
   }
 
   /**
-    * custom http request
-    *
-    * @param url
-    * @param contentype
-    * @param body
-    * @param method
-    * @param username
-    * @param password
-    * @return
-    */
+   * custom http request
+   *
+   * @param url
+   * @param contentype
+   * @param body
+   * @param method
+   * @param username
+   * @param password
+   * @return
+   */
   def httpRequest(url: String, contentType: String, body: String, method: String, username: String = "", password: String = ""): SimpleResponse = {
-       val requestBuilderRaw = HttpRequest.newBuilder()
-        .uri(new URI(url))
-        .method(method, BodyPublishers.ofString(body))
-        .header("Content-Type", contentType)
-     val httpRequest = if (Option(username).isDefined && Option(password).isDefined){ 
-       requestBuilderRaw.header("Authorization", makeBasicAuthHeader(username, password))
-       requestBuilderRaw.build()
-     } else requestBuilderRaw.build()
-      val response = HttpClient.newHttpClient()
-      .send(httpRequest, BodyHandlers.ofString())
-      val responseContentType = response.headers().firstValue("Content-Type").orElse(null)
-      SimpleResponse(response.statusCode(), Option(response.body()), Option(responseContentType))
+    var httpClientBuilder = HttpClient.newBuilder()
+    if (url.startsWith("https")){
+      httpClientBuilder = httpClientBuilder.sslContext(sslContext)
+    }
+    val httpClient = httpClientBuilder.build()
+    val requestBuilderRaw = HttpRequest.newBuilder()
+      .uri(new URI(url))
+      .method(method, BodyPublishers.ofString(body))
+      .header("Content-Type", contentType)
+      val httpRequest = if (Option(username).isDefined && Option(password).isDefined){ 
+        requestBuilderRaw.header("Authorization", makeBasicAuthHeader(username, password))
+        requestBuilderRaw.build()
+      } else requestBuilderRaw.build()
+      val response = httpClient
+        .send(httpRequest, BodyHandlers.ofString())
+        val responseContentType = response.headers().firstValue("Content-Type").orElse(null)
+        SimpleResponse(response.statusCode(), Option(response.body()), Option(responseContentType))
   }
 
   /**
@@ -158,7 +185,14 @@ package object testsupport {
     httpRequest(url, contentType, body, "DELETE", username, password)
   }
 
-  def startServlet(port: Int, authEnabled: Boolean, logger: Logger, systemKeyspace: String, rand: Random, namespace: String, clientConfig: CassandraClientConfig): ServletContext = {
+  def startServlet(port: Int, authEnabled: Boolean, logger: Logger, systemKeyspace: String, rand: Random, namespace: String, clientConfig: CassandraClientConfig, isSSL: Boolean = false): ServletContext = {
+    val res = getClass().getClassLoader().getResource("keystore")
+    if (res == null) {
+      throw new RuntimeException("missing keystore cannot initialize servlet")
+    }
+    val file = Paths.get(res.toURI()).toFile()
+    val keystorePath = file.getAbsolutePath()
+    logger.info(s"keystore path is $keystorePath")
     val entity = "Customer"
     logger.info("ensuring cassandra is started")
     val parsedStargateConfig = StargateConfig(
@@ -170,9 +204,9 @@ package object testsupport {
       32000L,
       systemKeyspace,
       clientConfig,
-      AuthConfig(authEnabled, "admin", "$2a$12$gXNcu.xX8VDCtj0Oc22bHenzT.uFd.zqR/hNzf5ed9XCx6Fo4WXF.")
+      AuthConfig(authEnabled, "admin", "$2a$12$gXNcu.xX8VDCtj0Oc22bHenzT.uFd.zqR/hNzf5ed9XCx6Fo4WXF.", isSSL, keystorePath, "abcd123")
     )
-
+    val scheme = if (isSSL) "https" else "http"
     //launch java servlet
     val t = new Thread {
       override def run(): Unit = {
@@ -192,21 +226,21 @@ package object testsupport {
     logger.info(s"posting body ${hoconBody}")
     var r: Option[SimpleResponse] = None
     if (authEnabled){
-     r = Option(
-      httpPost(
-        s"http://localhost:${port}/${StargateApiVersion}/api/${namespace}/schema",
-        "application/hocon",
-        hoconBody,
-        "admin",
-        "sgAdmin1234"
+      r = Option(
+        httpPost(
+          s"$scheme://localhost:${port}/${StargateApiVersion}/api/${namespace}/schema",
+          "application/hocon",
+          hoconBody,
+          "admin",
+          "sgAdmin1234"
         )
       )
     } else {
-     r = Option(
-      httpPost(
-        s"http://localhost:${port}/${StargateApiVersion}/api/${namespace}/schema",
-        "application/hocon",
-        hoconBody
+      r = Option(
+        httpPost(
+          s"$scheme://localhost:${port}/${StargateApiVersion}/api/${namespace}/schema",
+          "application/hocon",
+          hoconBody
         )
       )
     }

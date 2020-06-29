@@ -25,7 +25,7 @@ import (
 
 // Upload posts the contents of a file to an url
 func Upload(path string, url string) error {
-	url, err := purell.NormalizeURLString(url, purell.FlagsUnsafeGreedy)
+	url, err := purell.NormalizeURLString(url, purell.FlagsUsuallySafeGreedy)
 	if err != nil {
 		return err
 	}

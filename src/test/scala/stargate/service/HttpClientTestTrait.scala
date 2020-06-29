@@ -20,8 +20,24 @@ import stargate.service.testsupport.ServletContext
 import stargate.service.testsupport._
 
 trait HttpClientTestTrait {
-  val sc: ServletContext = MergedServletTest.sc
+
+  var sc: ServletContext = MergedServletTest.sc
+
+  /**
+   * wrap sets up the proper location of the http test server
+   *
+   * @param url base url to use. Do not start with a /
+   */
   def wrap(url: String) : String = {
     s"http://localhost:9090/${url}"
+  }
+
+  /**
+   * wrapSSL sets up the proper location of the ssl server
+   *
+   * @param url base url to use. Do not start with a /
+   */
+  def wrapSSL(url: String) : String = {
+    s"https://localhost:9092/${url}"
   }
 }

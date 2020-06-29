@@ -19,26 +19,35 @@ import scala.beans.BeanProperty
 import com.typesafe.config.Config
 
 /**
-  * 
-  * @param enabled will enable http basic auth on all requests
-  * @param user username for auth when enabled
-  * @param passwordHash bcrypt hashed password for auth
-  */
+ * 
+ * @param enabled will enable http basic auth on all requests
+ * @param user username for auth when enabled
+ * @param passwordHash bcrypt hashed password for auth
+ * @param ssl when enabled the sslCert and sslPass are read and http connections can be encrypted
+ * @param sslCert location of the ssl cert file
+ * @param sslPass password used to read the ssl cert file
+ */
 case class AuthConfig (
   @BeanProperty val enabled: Boolean,
   @BeanProperty val user: String,
-  @BeanProperty val passwordHash: String
+  @BeanProperty val passwordHash: String,
+  @BeanProperty val ssl: Boolean,
+  @BeanProperty val sslCert: String,
+  @BeanProperty val sslPass: String
 ){
-  
+
 }
 
 object AuthConfig {
 
   def parse(config: Config): AuthConfig = {
-      AuthConfig(
-        config.getBoolean("enabled"),
-        config.getString("user"),
-        config.getString("passwordHash")
-        )
+    AuthConfig(
+      config.getBoolean("enabled"),
+      config.getString("user"),
+      config.getString("passwordHash"),
+      config.getBoolean("ssl"),
+      config.getString("sslCert"),
+      config.getString("sslPass")
+    )
   }
 }

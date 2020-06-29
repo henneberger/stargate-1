@@ -17,7 +17,7 @@ FROM maven:3.6-jdk-11 AS build
 COPY src /home/app/src
 COPY pom.xml /home/app
 RUN mvn -f /home/app/pom.xml clean package -DskipTests
-
+ENV SG_SERVICE_JAVA_ARGS "-Dtest=1"
 #
 ## Package stage
 #
@@ -29,4 +29,4 @@ COPY --from=build /home/app/src/main/webapp ./stargate/src/main/webapp
 WORKDIR ./stargate
 RUN cp ./classes/logback-prod.xml ./classes/logback.xml
 
-CMD ["sh", "-c", "java -jar ./stargate.jar"]
+CMD bash -c "java $SG_SERVICE_JAVA_ARGS -jar ./stargate.jar"

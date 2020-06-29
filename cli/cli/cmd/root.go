@@ -15,7 +15,9 @@
 package cmd
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/datastax/stargate/cli/pkg/config"
@@ -31,13 +33,23 @@ var serviceVersion string
 
 var defaultCassandraVersion string
 var defaultServiceVersion string
-
+var verbose bool
+var insecureSSL bool
 var dockerConfig *config.SGDockerConfig
 
 var rootCmd = &cobra.Command{
 	Use:   "stargate",
 	Short: "A toolbox for working with Stargate",
 	Long:  `Welcome to Stargate, the easy query layer for your NoSQL database.`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if verbose {
+			fmt.Println("WARNING verbose enabled")
+		}
+		if insecureSSL {
+			fmt.Println("WARNING disabling SSL validation because -i flag was used")
+			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -55,6 +67,8 @@ func Execute(newDefaultServiceVersion, newDefaultCassandraVersion string) {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose mode")
+	rootCmd.PersistentFlags().BoolVarP(&insecureSSL, "ignore-ssl-sec", "i", false, "do not validate ssl certs, you can use this in testing with self signed certs but it is not safe for production")
 }
 
 // initConfig reads in config file and ENV variables if set.

@@ -42,6 +42,7 @@ final case class StargateConfig(
     @BeanProperty val stargateKeyspace: String,
     @BeanProperty val cassandra: CassandraClientConfig,
     @BeanProperty val auth: AuthConfig
+
 ) {
 
   /**

@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/PuerkitoBio/purell"
@@ -24,7 +25,7 @@ import (
 )
 
 func SchemaUrl(url string, name string) string {
-    return url+"/v1/api/"+name+"/schema"
+	return url + "/v1/api/" + name + "/schema"
 }
 
 // Apply sends a schema to server and print output for a user
@@ -47,7 +48,7 @@ func ApplyWithLog(cmd *cobra.Command, name, path, url string) error {
 		cmd.PrintErrln("Failed to apply schema!")
 		cmd.PrintErrln(err.Error())
 	} else {
-		endpointURL := purell.MustNormalizeURLString(SchemaUrl(url, name), purell.FlagsUnsafeGreedy)
+		endpointURL := purell.MustNormalizeURLString(SchemaUrl(url, name), purell.FlagsUsuallySafeGreedy)
 		cmd.Println("Endpoint created at", endpointURL)
 		cmd.Printf("\nView your API at: %s/api-docs/%s/swagger/\n\n", url, name)
 	}
@@ -66,13 +67,16 @@ Apply takes two required parameters:
 And one optional parameter:
 	host: the host and port of the running Stargate instance, the default being a local instance`,
 	Use:     "apply name path [host]",
-	Example: "stargate apply todo ./todo.conf server.stargate.com:8080",
+	Example: "stargate apply todo ./todo.conf http://server.stargate.com:8080",
 	Args:    cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		name, path := args[0], args[1]
 		var url string
 		if len(args) == 3 {
 			url = args[2]
+			if verbose {
+				fmt.Println(url)
+			}
 		}
 
 		err := ApplyWithLog(cmd, name, path, url)
