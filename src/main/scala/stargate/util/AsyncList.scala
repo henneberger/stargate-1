@@ -127,6 +127,14 @@ class AsyncList[T] private (private val getValue: () => Future[Option[(T, AsyncL
     (wrapped.map(_._1)(executor), unfuture(wrapped.map(_._2)(executor), executor))
   }
 
+  def dedupe(executor: ExecutionContext): AsyncList[T] = {
+    val set = new java.util.concurrent.ConcurrentHashMap[Option[T], Option[T]]()
+    this.filter(x => {
+      val option = Option(x)
+      set.putIfAbsent(option, option) == null
+    }, executor)
+  }
+
   def toList(executor: ExecutionContext): Future[List[T]] = {
     this.value.flatMap(maybeList => {
       maybeList.map(list => {
@@ -190,6 +198,14 @@ object AsyncList {
         }).getOrElse(Future.successful(None))
       })(executor)
     })
+  }
+
+  def contiguousGroups[T, K](list: AsyncList[T], key: T=>K, executor: ExecutionContext): AsyncList[List[T]] = {
+    AsyncList(() => stargate.util.flattenFOF(list.value.map(_.map(head_tail => {
+      val headKey = key(head_tail._1)
+      val (matching, remaining) = head_tail._2.span(x => key(x) == headKey, executor)
+      matching.map(m => (head_tail._1 +: m, contiguousGroups(remaining, key, executor)))(executor)
+    }))(executor), executor))
   }
 
   def filterSome[T](list: AsyncList[Option[T]], executor: ExecutionContext): AsyncList[T] = {

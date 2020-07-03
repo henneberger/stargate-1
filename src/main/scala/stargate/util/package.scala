@@ -16,7 +16,8 @@
 
 package stargate
 
-import java.util.concurrent.{Callable, CompletableFuture, Executors, ScheduledExecutorService, ScheduledFuture, TimeUnit}
+import java.util.concurrent.{Callable, CompletableFuture, Executor, Executors, ScheduledExecutorService, ScheduledFuture, TimeUnit}
+import java.util.function.Supplier
 
 import com.fasterxml.jackson.databind.{ObjectMapper, SerializationFeature}
 
@@ -72,24 +73,6 @@ package object util {
     }
   }
 
-  def asScala[T](future: java.util.concurrent.Future[T], backoff: Duration, scheduler: ScheduledExecutorService): Future[T] = {
-    val completableFuture = new CompletableFuture[T]()
-    val check: Object => Runnable = (self: Object) => () => {
-      if(future.isDone) {
-        val tryget = Try(future.get)
-        if(tryget.isSuccess) {
-          completableFuture.complete(tryget.get)
-        } else {
-          completableFuture.completeExceptionally(tryget.failed.get)
-        }
-      } else {
-        val check = self.asInstanceOf[Object => Runnable]
-        scheduler.schedule(check(check), backoff._1, backoff._2)
-      }
-    }
-    check(check).run()
-    completableFuture.asScala
-  }
   def retry[T](value: ()=>Future[T], remaining: Duration, backoff: Duration, scheduler: ScheduledExecutorService): Future[T] = {
     val executor = ExecutionContext.fromExecutor(scheduler)
     val t0 = System.nanoTime()
@@ -99,14 +82,23 @@ package object util {
       if(result.isSuccess || nextRemaining._1 < 0) {
         Success(Future.fromTry(result))
       } else {
-        val retryCallable: Callable[Future[T]] = () => retry(value, nextRemaining, backoff, scheduler)
-        val retryFuture: ScheduledFuture[Future[T]] = scheduler.schedule(retryCallable, backoff._1, backoff._2)
-        Success(asScala(retryFuture, Duration.apply(math.max(1, backoff._1/5), backoff._2), scheduler).flatten)
+        val retryNext = () => retry(value, nextRemaining, backoff, scheduler)
+        Success(scheduleAsync(retryNext, backoff, scheduler))
       }
     })(executor)
     future.flatten
   }
   def retry[T](value: ()=>Future[T], remaining: Duration, backoff: Duration): Future[T] = retry(value, remaining, backoff, Executors.newScheduledThreadPool(1))
+
+  def schedule[T](f: () => T, delay: Duration, scheduler: ScheduledExecutorService): Future[T] = {
+    val delayedExecutor = new Executor {
+      override def execute(runnable: Runnable): Unit = scheduler.schedule(runnable, delay._1, delay._2)
+    }
+    val callable: Supplier[T] = () => f()
+    val future = CompletableFuture.supplyAsync(callable, delayedExecutor)
+    future.asScala
+  }
+  def scheduleAsync[T](f: () => Future[T], delay: Duration, scheduler: ScheduledExecutorService): Future[T] = schedule(f, delay, scheduler).flatten
 
   def await[T](f: Future[T]): Try[T] = Try(Await.result(f, Duration.Inf))
 
@@ -114,14 +106,17 @@ package object util {
     implicit val ec: ExecutionContext = executor
     Future.sequence(fs)
   }
-  def sequence[T](os: List[Option[T]]): Option[List[T]] = if(os.contains(None)) None else Some(os.flatten)
+  def allDefined[T](os: List[Option[T]]): Option[List[T]] = if(os.contains(None)) None else Some(os.flatten)
 
-  def flattenFOFO[T](fofo: Future[Option[Future[Option[T]]]], executor: ExecutionContext): Future[Option[T]] = {
-    fofo.flatMap(ofo => ofo.getOrElse(Future.successful(None)))(executor)
+  def flattenFOF[T](fof: Future[Option[Future[T]]], executor: ExecutionContext): Future[Option[T]] = fof.flatMap(of => of.map(f => f.map(Some.apply)(executor)).getOrElse(Future.successful(None)))(executor)
+  def flattenFOFO[T](fofo: Future[Option[Future[Option[T]]]], executor: ExecutionContext): Future[Option[T]] = fofo.flatMap(ofo => ofo.getOrElse(Future.successful(None)))(executor)
+  def flattenFOLFO[T](folfo: Future[Option[List[Future[Option[T]]]]], executor: ExecutionContext): Future[Option[List[T]]] = {
+    folfo.flatMap(olfo => olfo.map(lfo => util.sequence(lfo, executor).map(lo => util.allDefined(lo))(executor)).getOrElse(Future.successful(None)))(executor)
   }
-  def flattenFLF[T](flf: Future[List[Future[T]]], executor: ExecutionContext): Future[List[T]] = {
-    flf.flatMap(lf => sequence(lf, executor))(executor)
+  def flattenFOLFOL[T](folfol: Future[Option[List[Future[Option[List[T]]]]]], executor: ExecutionContext): Future[Option[List[T]]] = {
+    flattenFOLFO(folfol, executor).map(_.map(_.flatten))(executor)
   }
+  def flattenFLF[T](flf: Future[List[Future[T]]], executor: ExecutionContext): Future[List[T]] = flf.flatMap(lf => sequence(lf, executor))(executor)
 
   def newCachedExecutor: ExecutionContext = ExecutionContext.fromExecutor(Executors.newCachedThreadPool)
 }

@@ -16,12 +16,13 @@
 
 package stargate
 
-import stargate.cassandra.{CassandraColumn, CassandraTable, DefaultCassandraColumn}
-import stargate.service.validations
-import stargate.util.AsyncList
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.`type`.{DataType, DataTypes}
+import stargate.cassandra.{CassandraColumn, CassandraTable, DefaultCassandraColumn}
 import stargate.model.queries.predefined.GetQuery
+import stargate.query.pagination
+import stargate.service.validations
+import stargate.util.AsyncList
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -102,41 +103,82 @@ package object model {
   case class OutputModel(
     input: InputModel,
     entityTables: Map[String, List[CassandraTable]],
-    relationTables: Map[(String,String), CassandraTable]) {
+    relationTables: Map[(String,String), CassandraTable],
+    transactionTable: CassandraTable) {
 
     val baseTables: Map[String, CassandraTable] = entityTables.map(et => (et._1, et._2.find(t => t.name == schema.baseTableName(et._1)).get))
     def tables: List[CassandraTable] = (entityTables.values.flatten ++ relationTables.values).toList
-
-
     def createTables(session: CqlSession, executor: ExecutionContext): Future[Unit] = {
-      implicit val ec: ExecutionContext = executor
-      Future.sequence(this.tables.map(cassandra.createTableAsync(session, _))).map(_ => ())
+      util.sequence(this.tables.map(cassandra.createTableAsync(session, _)), executor).map(_ => ())(executor)
     }
+    def createRampTables(session: CqlSession, executor: ExecutionContext): Future[Unit] = {
+      util.sequence(this.tables.map(cassandra.createRampTableAsync(session, _)), executor).map(_ => ())(executor)
+    }
+  }
 
-    def get(entityName: String, payload: Map[String, Object], session: CqlSession, executor: ExecutionContext): AsyncList[Map[String, Object]] =
-      stargate.query.untyped.get(this, entityName, payload, session, executor)
+  trait CRUD {
+    def get(entityName: String, payload: Map[String,Object]): AsyncList[Map[String, Object]]
+    def getAndTruncate(entityName: String, payload: Map[String,Object], limit: Int): Future[List[Map[String,Object]]]
+    def create(entityName: String, payload: Object): Future[List[Map[String, Object]]]
+    def update(entityName: String, payload: Map[String,Object]): Future[List[Map[String, Object]]]
+    def delete(entityName: String, payload: Map[String,Object]): Future[List[Map[String, Object]]]
 
-    val model: OutputModel = this
-    val mutation: MutationOps = new MutationOps {
-      override def create(entityName: String, payload: Object, session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]] =
+    def getAndTruncate(model: InputModel, entityName: String, payload: Map[String,Object], limit: Int, executor: ExecutionContext): Future[List[Map[String, Object]]] = {
+      val parsed = stargate.model.queries.parser.parseGet(model.entities, entityName, payload)
+      val async = this.get(entityName, payload)
+      pagination.truncate(model, entityName, parsed.selection, async, limit, 0, executor).map(_._1)(executor)
+    }
+  }
+  def unbatchedCRUD(model: OutputModel, session: CqlSession, executor: ExecutionContext): CRUD = {
+    new CRUD {
+      override def get(entityName: String, payload: Map[String,Object]): AsyncList[Map[String, Object]] =
+        stargate.query.untyped.get(model, entityName, payload, session, executor)
+      override def getAndTruncate(entityName: String, payload: Map[String,Object], limit: Int): Future[List[Map[String,Object]]] =
+        this.getAndTruncate(model.input, entityName, payload, limit, executor)
+      override def create(entityName: String, payload: Object): Future[List[Map[String, Object]]] =
         stargate.query.untyped.createUnbatched(model, entityName, payload, session, executor)
-      override def update(entityName: String, payload: Map[String, Object], session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]] =
+      override def update(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] =
         stargate.query.untyped.updateUnbatched(model, entityName, payload, session, executor)
-      override def delete(entityName: String, payload: Map[String, Object], session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]] =
+      override def delete(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] =
         stargate.query.untyped.deleteUnbatched(model, entityName, payload, session, executor)
     }
-    val batchMutation: MutationOps = new MutationOps {
-      override def create(entityName: String, payload: Object, session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]] =
+  }
+  def batchedCRUD(model: OutputModel, session: CqlSession, executor: ExecutionContext): CRUD = {
+    new CRUD {
+      override def get(entityName: String, payload: Map[String,Object]): AsyncList[Map[String, Object]] =
+        stargate.query.untyped.get(model, entityName, payload, session, executor)
+      override def getAndTruncate(entityName: String, payload: Map[String,Object], limit: Int): Future[List[Map[String,Object]]] =
+        this.getAndTruncate(model.input, entityName, payload, limit, executor)
+      override def create(entityName: String, payload: Object): Future[List[Map[String, Object]]] =
         stargate.query.untyped.createBatched(model, entityName, payload, session, executor)
-      override def update(entityName: String, payload: Map[String, Object], session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]] =
+      override def update(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] =
         stargate.query.untyped.updateBatched(model, entityName, payload, session, executor)
-      override def delete(entityName: String, payload: Map[String, Object], session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]] =
+      override def delete(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] =
         stargate.query.untyped.deleteBatched(model, entityName, payload, session, executor)
     }
   }
-  trait MutationOps {
-    def create(entityName: String, payload: Object, session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]]
-    def update(entityName: String, payload: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]]
-    def delete(entityName: String, payload: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[List[Map[String, Object]]]
+  def rampCRUD(model: OutputModel, session: CqlSession, executor: ExecutionContext): CRUD = {
+    val context = stargate.query.ramp.createContext(model, session, executor)
+    new CRUD {
+      override def get(entityName: String, payload: Map[String, Object]): AsyncList[Map[String, Object]] = {
+        val req = stargate.model.queries.parser.parseGet(model.input.entities, entityName, payload)
+        AsyncList.unfuture(stargate.query.ramp.get(context, entityName, req).map(res => pagination.untruncate(model.input, entityName, res.get))(executor), executor)
+      }
+      override def getAndTruncate(entityName: String, payload: Map[String, Object], limit: Int): Future[List[Map[String, Object]]] = {
+        this.getAndTruncate(model.input, entityName, payload, limit, executor)
+      }
+      override def create(entityName: String, payload: Object): Future[List[Map[String, Object]]] = {
+        val req = stargate.model.queries.parser.parseCreate(model.input.entities, entityName, payload)
+        stargate.query.ramp.mutation(context, entityName, req).map(_.get)(executor)
+      }
+      override def update(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] = {
+        val req = stargate.model.queries.parser.parseUpdate(model.input.entities, entityName, payload)
+        stargate.query.ramp.mutation(context, entityName, req).map(_.get)(executor)
+      }
+      override def delete(entityName: String, payload: Map[String, Object]): Future[List[Map[String, Object]]] = {
+        val req = stargate.model.queries.parser.parseDelete(model.input.entities, entityName, payload)
+        stargate.query.ramp.delete(context, entityName, req).map(_.get)(executor)
+      }
+    }
   }
 }

@@ -16,12 +16,8 @@
 
 package stargate.query
 
-import java.lang
 import java.util.UUID
 
-import stargate.model.{OutputModel, ScalarComparison, ScalarCondition}
-import stargate.util.AsyncList
-import stargate.{cassandra, schema}
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.querybuilder.QueryBuilder
 import com.datastax.oss.driver.api.querybuilder.relation.OngoingWhereClause
@@ -29,12 +25,33 @@ import com.datastax.oss.driver.api.querybuilder.select.{Select, SelectFrom}
 import com.datastax.oss.driver.api.querybuilder.term.Term
 import com.datastax.oss.driver.internal.core.util.Strings
 import stargate.cassandra.{CassandraColumn, CassandraTable}
+import stargate.model.{ScalarComparison, ScalarCondition}
+import stargate.util.AsyncList
+import stargate.{cassandra, schema}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 
 // functions used to implement stargate queries
 object read {
+
+  def checkCondition(row: Map[String,Object], condition: ScalarCondition[Object]): Boolean = {
+    val column = row.get(condition.field).orNull.asInstanceOf[Comparable[Object]]
+    val argument = condition.argument
+    def listArgument: List[Object] = argument.asInstanceOf[List[Object]]
+    def nonNull = column != null && argument != null
+    def bothNull = column == null && argument == null
+    def comparison = column.compareTo(argument)
+    condition.comparison match {
+      case ScalarComparison.LT => nonNull && comparison < 0
+      case ScalarComparison.LTE => nonNull && comparison <= 0
+      case ScalarComparison.EQ => bothNull || (nonNull && comparison == 0)
+      case ScalarComparison.GTE => nonNull && comparison >= 0
+      case ScalarComparison.GT => nonNull && comparison > 0
+      case ScalarComparison.IN => argument != null && listArgument.contains(column)
+    }
+  }
+  def checkConditions(row: Map[String,Object], conditions: List[ScalarCondition[Object]]): Boolean = conditions.forall(c => checkCondition(row, c))
 
   def appendWhere[T <: OngoingWhereClause[T]](select: T, condition: ScalarCondition[Object]): T = {
     val where = select.whereColumn(Strings.doubleQuote(condition.field))
@@ -85,6 +102,12 @@ object read {
   def selectStatement(table: CassandraTable, conditions: List[ScalarCondition[Object]]): Select = {
     selectStatement(table.keyspace, table.name, physicalConditions(table.columns.combinedMap, conditions))
   }
+  def selectStatement(table: CassandraTable, values: Map[String,Object]): Select = {
+    selectStatement(table, values.toList.map(v => ScalarCondition[Object](v._1, ScalarComparison.EQ, v._2)))
+  }
+  def selectKeysStatement(table: CassandraTable, values: Map[String,Object]): Select = {
+    selectStatement(table, values.filter(kv => table.columns.key.combinedMap.contains(kv._1)))
+  }
 
   def relatedSelect(keyspace: String, relationTable: String, fromIds: List[UUID], session: CqlSession,  executor: ExecutionContext): AsyncList[UUID] = {
     val conditions = List(ScalarCondition[Object](schema.RELATION_FROM_COLUMN_NAME, ScalarComparison.IN, fromIds))
@@ -92,12 +115,12 @@ object read {
     rows.map(_.getUuid(schema.RELATION_TO_COLUMN_NAME), executor)
   }
 
-  def entityIdToObject(model: OutputModel, entityName: String, maybeColumns: Option[List[String]], id: UUID, session: CqlSession, executor: ExecutionContext): Future[Option[Map[String,Object]]] = {
-    val baseTable = model.baseTables(entityName)
+  def entityIdToObject(context: Context, entityName: String, maybeColumns: Option[List[String]], id: UUID): Future[Option[Map[String,Object]]] = {
+    val baseTable = context.model.baseTables(entityName)
     val select = selectStatement(baseTable.keyspace, baseTable.name, maybeColumns, List(ScalarCondition[Object](schema.ENTITY_ID_COLUMN_NAME, ScalarComparison.EQ, id)))
-    cassandra.queryAsync(session, select.build, executor).maybeHead(executor).map(_.map(cassandra.rowToMap))(executor)
+    cassandra.queryAsync(context.session, select.build, context.executor).maybeHead(context.executor).map(_.map(cassandra.rowToMap))(context.executor)
   }
-  def entityIdToObject(model: OutputModel, entityName: String, id: UUID, session: CqlSession, executor: ExecutionContext): Future[Option[Map[String, Object]]] = {
-    entityIdToObject(model, entityName, None, id, session, executor)
+  def entityIdToObject(context: Context, entityName: String, id: UUID): Future[Option[Map[String, Object]]] = {
+    entityIdToObject(context, entityName, None, id)
   }
 }

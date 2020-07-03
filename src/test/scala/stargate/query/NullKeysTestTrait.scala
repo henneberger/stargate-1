@@ -42,6 +42,7 @@ trait NullKeysTestTrait extends CassandraTestSession {
     val executor = ExecutionContext.global
     val keyspace = this.newKeyspace()
     val model = schema.outputModel(stargate.model.parser.parseModel(ConfigFactory.parseResources("optional-keys.conf")), keyspace)
+    val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
     val viewTable = model.entityTables("foo").filter(t => t.name != schema.baseTableName("foo")).head
     val keys = viewTable.columns.key.names.combined
     util.await(model.createTables(session, executor)).get
@@ -51,18 +52,18 @@ trait NullKeysTestTrait extends CassandraTestSession {
       Map((keys(0), longOf(1)), (keys(1), longOf(1))),
       Map((keys(0), longOf(1)), (keys(1), longOf(2)))
     )
-    val res = util.await(util.sequence(foos.map(foo => model.mutation.create("foo", foo, session, executor)), executor)).get
+    val res = util.await(util.sequence(foos.map(foo => crud.create("foo", foo)), executor)).get
 
     val conds1 = List[Object](keys(0), "=", longOf(1), keys(1), "=", longOf(1))
     val query1 = Map((keywords.mutation.MATCH, conds1))
     checkPerfectMatch(model, "foo", conds1)
-    val res1 = util.await(model.get("foo", query1, session, executor).toList(executor)).get
+    val res1 = util.await(crud.get("foo", query1).toList(executor)).get
     assert(res1.length == 2)
 
     val conds2 = List[Object](keys(0), "=", longOf(1), keys(1), "IN", List(longOf(1), longOf(2)))
     val query2 = Map((keywords.mutation.MATCH, conds2))
     checkPerfectMatch(model, "foo", conds2)
-    val res2 = util.await(model.get("foo", query2, session, executor).toList(executor)).get
+    val res2 = util.await(crud.get("foo", query2).toList(executor)).get
     assert(res2.length == 3)
 
   }

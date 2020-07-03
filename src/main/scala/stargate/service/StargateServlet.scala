@@ -238,13 +238,11 @@ class StargateServlet(
     require(query.isSuccess, s"""no such query "$queryName" for database "$appName" """)
     val runtimePayload = queries.predefined.transform(query.get, payloadMap)
     val result = stargate.query.getAndTruncate(
-      model,
+      stargate.query.Context(model, cqlSession, executor),
       query.get.entityName,
       runtimePayload,
       sgConfig.defaultLimit,
-      sgConfig.defaultTTL,
-      cqlSession,
-      executor
+      sgConfig.defaultTTL
     )
     val entities = cacheStreams(result)
     resp.setContentType("application/json")
@@ -313,6 +311,7 @@ class StargateServlet(
 
   def runQuery(appName: String, entity: String, op: String, payload: Object, resp: HttpServletResponse): Unit = {
     val model = lookupModel(appName)
+    val crud = stargate.model.unbatchedCRUD(model, cqlSession, executor)
     require(model.input.entities.contains(entity), s"""database "$appName" does not have an entity named "$entity" """)
     val payloadMap = Try(payload.asInstanceOf[Map[String, Object]])
     logger.trace(s"query payload: $payload")
@@ -322,9 +321,9 @@ class StargateServlet(
       case "GET" =>
         val result = query.untyped.getAndTruncate(model, entity, payloadMap.get, sgConfig.defaultLimit, sgConfig.defaultTTL, cqlSession, executor)
         cacheStreams(result)
-      case "POST"   => model.mutation.create(entity, payload, cqlSession, executor).map(wrapResponse)(executor)
-      case "PUT"    => model.mutation.update(entity, payloadMap.get, cqlSession, executor).map(wrapResponse)(executor)
-      case "DELETE" => model.mutation.delete(entity, payloadMap.get, cqlSession, executor).map(wrapResponse)(executor)
+      case "POST"   => crud.create(entity, payload).map(wrapResponse)(executor)
+      case "PUT"    => crud.update(entity, payloadMap.get).map(wrapResponse)(executor)
+      case "DELETE" => crud.delete(entity, payloadMap.get).map(wrapResponse)(executor)
       case _        => Future.failed(new RuntimeException(s"unsupported op: $op"))
     }
     logger.trace(op, Await.result(result, Duration.Inf))

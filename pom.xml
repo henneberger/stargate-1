@@ -113,7 +113,7 @@ limitations under the License.
 				</executions>
 				<configuration>
 					<mainClass>stargate.Main</mainClass>
-					<argument>-Xmx2048m</argument>
+					<arguments>-Xmx2048m</arguments>
 				</configuration>
 			</plugin>
 			<plugin>

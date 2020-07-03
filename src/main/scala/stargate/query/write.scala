@@ -76,6 +76,7 @@ object write {
 
   def updateEntity(tables: List[CassandraTable], currentEntity: Map[String,Object], changes: Map[String,Object]): List[SimpleStatement] = {
     val updateStatements = tables.map(table => {
+      // TODO: allow changes to contain null for key values
       val keyChanged = table.columns.key.combined.exists(col => changes.get(col.name).orNull != null)
       if(keyChanged) {
         val maybeDelete = write.deleteEntityStatement(table, currentEntity)

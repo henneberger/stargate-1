@@ -17,6 +17,7 @@
 package stargate.query
 
 import java.util.UUID
+import java.util.concurrent.Executors
 
 import com.datastax.oss.driver.api.core.CqlSession
 import com.typesafe.config.ConfigFactory
@@ -24,7 +25,7 @@ import org.junit.Assert._
 import org.junit.Test
 import stargate.model._
 import stargate.schema.ENTITY_ID_COLUMN_NAME
-import stargate.{CassandraTestSession, keywords, query, util}
+import stargate.{CassandraTestSession, keywords, query, schema, util}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -34,7 +35,6 @@ import scala.util.Random
 trait EntityCRUDTestTrait extends CassandraTestSession {
 
   import EntityCRUDTestTrait._
-  implicit val executor: ExecutionContext = EntityCRUDTestTrait.executor
 
   // checks that two entity trees are the same, ignoring missing or empty-list relations
   def diff(expected: Map[String,Object], queried: Map[String,Object]): Unit = {
@@ -45,7 +45,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
         val getValList = getVal.asInstanceOf[List[Map[String,Object]]].sortBy(_(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID])
         assertEquals(createVal.length, getValList.length)
         createVal.zip(getValList).map(cg => diff(cg._1, cg._2))
-      } else {
+      } else if(!Set(schema.TRANSACTION_ID_COLUMN_NAME, schema.TRANSACTION_DELETED_COLUMN_NAME).contains(field)) {
         assertEquals(getVal, expected(field))
       }
     })
@@ -56,11 +56,11 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     relations(Random.nextInt(relations.length))
   }
 
-  def updateNestedScalars(model: OutputModel, mutations: MutationOps, entityName: String, entity: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
+  def updateNestedScalars(model: OutputModel, crud: CRUD, entityName: String, entity: Map[String,Object], executor: ExecutionContext): Future[Map[String,Object]] = {
     val randomRelation = chooseRandomRelation(model, entityName, entity)
     val newValues = stargate.model.generator.entityFields(model.input.entities(randomRelation.targetEntityName).fields.values.toList)
     val updaateReq = newValues ++ Map((stargate.keywords.mutation.MATCH, List(randomRelation.inverseName + "." + ENTITY_ID_COLUMN_NAME, "=", entity(ENTITY_ID_COLUMN_NAME))))
-    val updateRes = mutations.update(randomRelation.targetEntityName, updaateReq, session, executor)
+    val updateRes = crud.update(randomRelation.targetEntityName, updaateReq)
     updateRes.map(_ => {
       val children = entity(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
       val updatedChildren = children.map(_ ++ newValues)
@@ -68,13 +68,13 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     })(executor)
   }
 
-  def linkNestedRelation(model: OutputModel, mutations: MutationOps, entityName: String, entity: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
+  def linkNestedRelation(model: OutputModel, crud: CRUD, entityName: String, entity: Map[String,Object], executor: ExecutionContext): Future[Map[String,Object]] = {
     val randomRelation = chooseRandomRelation(model, entityName, entity)
     val newChildren = List.range(1, Random.between(2, 5)).map(_ => stargate.model.generator.createEntity(model.input.entities, randomRelation.targetEntityName, 1))
     val requestMatch = Map((stargate.keywords.mutation.MATCH, List(ENTITY_ID_COLUMN_NAME, "=", entity(ENTITY_ID_COLUMN_NAME))))
     val requestLink = Map((randomRelation.name, Map((stargate.keywords.relation.LINK, Map((stargate.keywords.mutation.CREATE, newChildren))))))
     val request = requestMatch ++ requestLink
-    val updateRes = mutations.update(entityName,request, session, executor)
+    val updateRes = crud.update(entityName,request)
     updateRes.map(response => {
       val linkedEntities = response(0)(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
       linkedEntities.foreach(e => assertEquals(e(keywords.response.RELATION), keywords.response.RELATION_LINK))
@@ -85,7 +85,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     })(executor)
   }
 
-  def unlinkNestedRelation(model: OutputModel, mutations: MutationOps, entityName: String, entity: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
+  def unlinkNestedRelation(model: OutputModel, crud: CRUD, entityName: String, entity: Map[String,Object], executor: ExecutionContext): Future[Map[String,Object]] = {
     val randomRelation = chooseRandomRelation(model, entityName, entity)
     val children = entity(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
     if(children.isEmpty) {
@@ -95,7 +95,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val requestMatch = Map((stargate.keywords.mutation.MATCH, List(ENTITY_ID_COLUMN_NAME, "=", entity(ENTITY_ID_COLUMN_NAME))))
     val requestUnlink = Map((randomRelation.name, Map((stargate.keywords.relation.UNLINK, List(ENTITY_ID_COLUMN_NAME, "=", randomChild)))))
     val request = requestMatch ++ requestUnlink
-    val updateRes = mutations.update(entityName, request, session, executor)
+    val updateRes = crud.update(entityName, request)
     updateRes.map(response => {
       assert(response.length == 1)
       val unlinkedEntities = response(0)(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
@@ -106,7 +106,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     })(executor)
   }
 
-  def replaceNestedRelation(model: OutputModel, mutations: MutationOps, entityName: String, entity: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
+  def replaceNestedRelation(model: OutputModel, crud: CRUD, entityName: String, entity: Map[String,Object], executor: ExecutionContext): Future[Map[String,Object]] = {
     val randomRelation = chooseRandomRelation(model, entityName, entity)
     val children = entity(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
     if(children.isEmpty) {
@@ -116,7 +116,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val requestMatch = Map((stargate.keywords.mutation.MATCH, List(ENTITY_ID_COLUMN_NAME, "=", entity(ENTITY_ID_COLUMN_NAME))))
     val requestUnlink = Map((randomRelation.name, Map((stargate.keywords.relation.UNLINK, List(ENTITY_ID_COLUMN_NAME, "=", randomChild)))))
     val request = requestMatch ++ requestUnlink
-    val updateRes = mutations.update(entityName, request, session, executor)
+    val updateRes = crud.update(entityName, request)
     updateRes.map(response => {
       assert(response.length == 1)
       val relationResponse = response(0)(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
@@ -128,7 +128,7 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     })(executor)
   }
 
-  def deleteNestedEntity(model: OutputModel, mutations: MutationOps, entityName: String, entity: Map[String,Object], session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
+  def deleteNestedEntity(model: OutputModel, crud: CRUD, entityName: String, entity: Map[String,Object], executor: ExecutionContext): Future[Map[String,Object]] = {
     val randomRelation = chooseRandomRelation(model, entityName, entity)
     val children = entity(randomRelation.name).asInstanceOf[List[Map[String,Object]]]
     if(children.isEmpty) {
@@ -136,44 +136,41 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     }
     val randomChild = children(Random.nextInt(children.length))(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID]
     val requestMatch = Map((stargate.keywords.mutation.MATCH, List(ENTITY_ID_COLUMN_NAME, "=", randomChild)))
-    val deleteRes = mutations.delete(randomRelation.targetEntityName, requestMatch, session, executor)
+    val deleteRes = crud.delete(randomRelation.targetEntityName, requestMatch)
     deleteRes.flatMap(response => {
-      val deleted = getEntities(model, randomRelation.targetEntityName, randomChild, session, executor)
+      val deleted = getEntities(model.input, crud, randomRelation.targetEntityName, randomChild, executor)
       deleted.map(deleted => { assert(deleted.isEmpty); response})(executor)
     })(executor).map(_ => {
       entity.updatedWith(randomRelation.name)(_.map(_.asInstanceOf[List[Map[String,Object]]].filter(_(ENTITY_ID_COLUMN_NAME) != randomChild)))
     })(executor)
   }
 
-  def crudTest(model: OutputModel, mutations: MutationOps, session: CqlSession, keyspace: String): Unit = {
-    val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
-    val model = stargate.schema.outputModel(inputModel, keyspace)
+  def crudTest(model: OutputModel, crud: CRUD, executor: ExecutionContext): Unit = {
     implicit val ec: ExecutionContext = EntityCRUDTestTrait.executor
-    util.await(model.createTables(session, executor)).get
     model.input.entities.keys.foreach(entityName => {
       List.range(0, 20).foreach(_ => {
-        val created = Await.result(createEntityWithIds(model, mutations, entityName, session, executor), Duration.Inf)
-        val get1 = Await.result(getEntity(model, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], session, executor), Duration.Inf)
+        val created = Await.result(createEntityWithIds(model, crud, entityName, executor), Duration.Inf)
+        val get1 = Await.result(getEntity(model.input, crud, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], executor), Duration.Inf)
         diff(created, get1)
 
-        val updated = Await.result(updateNestedScalars(model, mutations, entityName, created, session, executor), Duration.Inf)
-        val get2 = Await.result(getEntity(model, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], session, executor), Duration.Inf)
+        val updated = Await.result(updateNestedScalars(model, crud, entityName, created, executor), Duration.Inf)
+        val get2 = Await.result(getEntity(model.input,crud, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], executor), Duration.Inf)
         diff(updated, get2)
 
-        val linked = Await.result(linkNestedRelation(model, mutations, entityName, updated, session, executor), Duration.Inf)
-        val get3 = Await.result(getEntity(model, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], session, executor), Duration.Inf)
+        val linked = Await.result(linkNestedRelation(model, crud, entityName, updated, executor), Duration.Inf)
+        val get3 = Await.result(getEntity(model.input, crud, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], executor), Duration.Inf)
         diff(linked, get3)
 
-        val unlinked = Await.result(unlinkNestedRelation(model, mutations, entityName, linked, session, executor), Duration.Inf)
-        val get4 = Await.result(getEntity(model, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], session, executor), Duration.Inf)
+        val unlinked = Await.result(unlinkNestedRelation(model, crud, entityName, linked, executor), Duration.Inf)
+        val get4 = Await.result(getEntity(model.input, crud, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], executor), Duration.Inf)
         diff(unlinked, get4)
 
-        val replaced = Await.result(unlinkNestedRelation(model, mutations, entityName, unlinked, session, executor), Duration.Inf)
-        val get5 = Await.result(getEntity(model, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], session, executor), Duration.Inf)
+        val replaced = Await.result(unlinkNestedRelation(model, crud, entityName, unlinked, executor), Duration.Inf)
+        val get5 = Await.result(getEntity(model.input, crud, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], executor), Duration.Inf)
         diff(replaced, get5)
 
-        val deleted = Await.result(deleteNestedEntity(model, mutations, entityName, replaced, session, executor), Duration.Inf)
-        val get6 = Await.result(getEntity(model, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], session, executor), Duration.Inf)
+        val deleted = Await.result(deleteNestedEntity(model, crud, entityName, replaced, executor), Duration.Inf)
+        val get6 = Await.result(getEntity(model.input, crud, entityName, created(ENTITY_ID_COLUMN_NAME).asInstanceOf[UUID], executor), Duration.Inf)
         diff(deleted, get6)
       })
     })
@@ -184,7 +181,9 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
-    crudTest(model, model.mutation, session, keyspace)
+    util.await(model.createTables(session, executor)).get
+    val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
+    crudTest(model, crud, executor)
   }
 
   @Test
@@ -192,17 +191,30 @@ trait EntityCRUDTestTrait extends CassandraTestSession {
     val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
-    crudTest(model, model.batchMutation, session, keyspace)
+    util.await(model.createTables(session, executor)).get
+    val crud = stargate.model.batchedCRUD(model, this.session, executor)
+    crudTest(model, crud, executor)
+  }
+
+  @Test
+  def rampCrudTest: Unit = {
+    val executor = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(1))
+    val inputModel = parser.parseModel(ConfigFactory.parseResources("schema.conf"))
+    val keyspace = newKeyspace()
+    val model = stargate.schema.rampOutputModel(inputModel, keyspace)
+    util.await(model.createRampTables(session, executor)).get
+    val crud = stargate.model.rampCRUD(model, this.session, executor)
+    crudTest(model, crud, executor)
   }
 }
 
 object EntityCRUDTestTrait {
 
-  implicit val executor: ExecutionContext = ExecutionContext.global
+  val executor: ExecutionContext = ExecutionContext.global
 
-  def create(model: OutputModel, mutations: MutationOps, entityName: String, session: CqlSession, executor: ExecutionContext): (Map[String,Object], Future[Map[String,Object]]) = {
+  def create(model: OutputModel, crud: CRUD, entityName: String, executor: ExecutionContext): (Map[String,Object], Future[Map[String,Object]]) = {
     val request = stargate.model.generator.createEntity(model.input.entities, entityName)
-    val response = mutations.create(entityName, request, session, executor).map(_(0))(executor)
+    val response = crud.create(entityName, request).map(_(0))(executor)
     (request, response)
   }
 
@@ -226,8 +238,8 @@ object EntityCRUDTestTrait {
     withRelations
   }
 
-  def createEntityWithIds(model: OutputModel, mutations: MutationOps, entityName: String, session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
-    val (request, response) = create(model, mutations, entityName, session, executor)
+  def createEntityWithIds(model: OutputModel, crud: CRUD, entityName: String, executor: ExecutionContext): Future[Map[String,Object]] = {
+    val (request, response) = create(model, crud, entityName, executor)
     response.map(zipEntityIds(model.input, entityName, request, _))(executor)
   }
 
@@ -240,16 +252,18 @@ object EntityCRUDTestTrait {
     val conditions = Map((stargate.keywords.mutation.MATCH, List(ENTITY_ID_COLUMN_NAME, "=", entityId)))
     conditions ++ getRequestRelations(model, entityName, Set(entityName))
   }
-  def getEntities(model: OutputModel, entityName: String, entityId: UUID, session: CqlSession, executor: ExecutionContext): Future[List[Map[String,Object]]] = {
-    val request = getRequestByEntityId(model.input, entityName, entityId)
-    query.untyped.getAndTruncate(model, entityName, request, 1000, session, executor)
+  def getEntities(model: InputModel, crud: CRUD, entityName: String, request: Map[String,Object], executor: ExecutionContext): Future[List[Map[String,Object]]] = {
+    val parsedRequest = stargate.model.queries.parser.parseGet(model.entities, entityName, request)
+    crud.getAndTruncate(entityName, request, 1000)
   }
-  def getEntity(model: OutputModel, entityName: String, entityId: UUID, session: CqlSession, executor: ExecutionContext): Future[Map[String,Object]] = {
-    getEntities(model, entityName, entityId, session, executor).map(list => {assert(list.length == 1); list(0)})(executor)
+  def getEntities(model: InputModel, crud: CRUD, entityName: String, entityId: UUID, executor: ExecutionContext): Future[List[Map[String,Object]]] = {
+    getEntities(model, crud, entityName, getRequestByEntityId(model, entityName, entityId), executor)
   }
-  def getAllEntities(model: OutputModel, entityName: String, session: CqlSession, executor: ExecutionContext): Future[List[Map[String,Object]]] = {
-    val request = getRequestRelations(model.input, entityName, Set(entityName)).updated(stargate.keywords.mutation.MATCH, "all")
-    query.untyped.getAndTruncate(model, entityName, request, 1000, session, executor)
+  def getEntity(model: InputModel, crud: CRUD, entityName: String, entityId: UUID, executor: ExecutionContext): Future[Map[String,Object]] = {
+    getEntities(model, crud, entityName, entityId, executor).map(list => {assert(list.length == 1); list(0)})(executor)
+  }
+  def getAllEntities(model: InputModel, crud: CRUD, entityName: String, executor: ExecutionContext): Future[List[Map[String,Object]]] = {
+    getEntities(model, crud, entityName, getRequestRelations(model, entityName, Set(entityName)).updated(stargate.keywords.mutation.MATCH, "all"), executor)
   }
 
 }

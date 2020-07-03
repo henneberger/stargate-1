@@ -24,19 +24,23 @@ import scala.util.Try
 
 object schema {
 
+  val TRANSACION_TABLE_NAME = "transactions"
   val ENTITY_ID_COLUMN_NAME = "entityId"
+  val TRANSACTION_ID_COLUMN_NAME = "transactionId"
+  val TRANSACTION_DELETED_COLUMN_NAME = "transactionDeleted"
+  val TRANSACTION_STATE_COLUMN_NAME = "transactionState"
   val RELATION_FROM_COLUMN_NAME = "from"
   val RELATION_TO_COLUMN_NAME = "to"
   val RELATION_JOIN_STRING = "."
   val RELATION_SPLIT_REGEX = "\\."
 
+  val transactionIdColumn = DefaultCassandraColumn(TRANSACTION_ID_COLUMN_NAME, DataTypes.frozenListOf(DataTypes.BIGINT))
   def baseTableName(entityName: String) = entityName
   val baseTableKey = CassandraKey(List(DefaultCassandraColumn(ENTITY_ID_COLUMN_NAME, DataTypes.UUID)), List.empty)
   def viewTableName(entityName: String, key: CassandraKeyNames) = entityName + "_" + key.partitionKeys.mkString("_") + "_" + key.clusteringKeys.mkString("_")
   def relationTableName(entityName: String, relationName: String) = entityName + "_" + relationName
   val relationTableKey = CassandraKey(List(DefaultCassandraColumn(RELATION_FROM_COLUMN_NAME, DataTypes.UUID)), List(DefaultCassandraColumn(RELATION_TO_COLUMN_NAME, DataTypes.UUID)))
   val relationTableColumns = CassandraColumns(relationTableKey, List.empty)
-  val relationTableTypes = Map((RELATION_FROM_COLUMN_NAME, DataTypes.UUID), (RELATION_TO_COLUMN_NAME, DataTypes.UUID))
 
   type GroupedConditions[T] = Map[List[String], List[ScalarCondition[T]]]
   def MATCH_ALL_CONDITION[T]: GroupedConditions[T] = Map((List.empty, List.empty))
@@ -47,6 +51,12 @@ object schema {
     } else {
       CassandraKeyNames(key.partitionKeys, key.clusteringKeys ++ List(ENTITY_ID_COLUMN_NAME))
     }
+  }
+
+  def rampTable(table: CassandraTable): CassandraTable = {
+    val key = CassandraKey(table.columns.key.partitionKeys, table.columns.key.clusteringKeys ++ List(transactionIdColumn))
+    val data = table.columns.data ++ List(DefaultCassandraColumn(TRANSACTION_DELETED_COLUMN_NAME, DataTypes.BOOLEAN))
+    CassandraTable(table.keyspace, table.name, CassandraColumns(key, data))
   }
 
   def conditionsKey(conditions: NamedConditions, cardinality: String=>Option[Long], minPartitionKeys: Long): CassandraKeyNames = {
@@ -92,6 +102,10 @@ object schema {
   def tableScores(conditions: NamedConditions, tables: List[CassandraTable]): Map[KeyConditionScore, List[CassandraTable]] = {
     val scores = tables.map(t => (keySupportsConditions(t.columns.names, conditions), t))
     scores.groupMap(_._1)(_._2)
+  }
+
+  def transactionStateTable(keyspace: String): CassandraTable = {
+    CassandraTable(keyspace, TRANSACION_TABLE_NAME, CassandraColumns(CassandraKey(List(transactionIdColumn), List.empty), List(DefaultCassandraColumn(TRANSACTION_STATE_COLUMN_NAME, DataTypes.INT))))
   }
 
   def baseTable(keyspace: String, entity: Entity): CassandraTable = {
@@ -185,7 +199,13 @@ object schema {
 
   def outputModel(model: InputModel, keyspace: String, minPartitions: Long = 1000): OutputModel = {
     val (entityTables, relationTables) = modelTables(model, keyspace, minPartitions)
-    OutputModel(model, entityTables, relationTables)
+    OutputModel(model, entityTables, relationTables, null)
+  }
+
+  def rampOutputModel(model: InputModel, keyspace: String, minPartitions: Long = 1000): OutputModel = {
+    val (entityTables, relationTables) = modelTables(model, keyspace, minPartitions)
+    val transactionTable = transactionStateTable(keyspace)
+    OutputModel(model, entityTables.view.mapValues(_.map(rampTable)).toMap, relationTables.view.mapValues(rampTable).toMap, transactionTable)
   }
 
 }

@@ -19,7 +19,7 @@ package stargate.query
 import com.typesafe.config.ConfigFactory
 import org.junit.Assert._
 import org.junit.Test
-import stargate.{CassandraTestSession, util}
+import stargate.{CassandraTestSession, query, util}
 import stargate.model.{parser, queries}
 
 import scala.concurrent.duration.Duration
@@ -33,14 +33,15 @@ trait PredefinedQueryTestTrait extends CassandraTestSession {
     val keyspace = newKeyspace()
     val model = stargate.schema.outputModel(inputModel, keyspace)
     val executor = ExecutionContext.global
+    val crud = stargate.model.unbatchedCRUD(model, this.session, executor)
     util.await(model.createTables(session, executor)).get
 
     List.range(0, 10).foreach(_ => {
-      val entity = EntityCRUDTestTrait.createEntityWithIds(model, model.mutation, "A", session, executor)
+      val entity = EntityCRUDTestTrait.createEntityWithIds(model, crud, "A", executor)
       Await.result(entity, Duration.Inf)
     })
     val req = queries.predefined.transform(model.input.queries("getAandB"),  Map((stargate.keywords.mutation.MATCH, Map.empty)))
-    val entities = Await.result(stargate.query.getAndTruncate(model, "A", req, 10000, session, executor), Duration.Inf)
+    val entities = Await.result(stargate.query.getAndTruncate(query.Context(model, session, executor), "A", req, 10000), Duration.Inf)
     entities.foreach(a => {
       assertEquals(a.keySet, Set("entityId", "x", "y", "b"))
       a("b").asInstanceOf[List[Map[String,Object]]].foreach(b => {
